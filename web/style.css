@@ -199,7 +199,17 @@ html, body {
   cursor: pointer;
   white-space: nowrap;
 }
+/* Three levels of emphasis and no more: past is dimmed, the trip-plannable
+   next few years are lifted, everything else sits in between. The lift stays
+   in the same accent hue as the rest of the UI so it cannot be mistaken for a
+   new category, and it is declared before the hover and selected rules so
+   those still win. */
 #eclipse-menu .row.past { opacity: 0.5; }
+#eclipse-menu .row.near {
+  background: rgba(255, 210, 74, 0.06);
+  box-shadow: inset 3px 0 0 rgba(255, 210, 74, 0.5);
+}
+#eclipse-menu .row.near .g { color: #9aa3b8; }
 #eclipse-menu .row:hover,
 #eclipse-menu .row.active {
   background: rgba(255, 255, 255, 0.11);

@@ -5,11 +5,15 @@
 (function () {
   'use strict';
 
-  // Bump by hand at each milestone. 1 = first working map, 2 = click-to-time,
-  // 3 = full set of site markers, 4 = version badge, 5 = 1986-2066 catalogue,
-  // 6 = title card doubles as the eclipse picker, 7 = signposted trigger and
-  // grouped list, opening on the next eclipse rather than 2027.
-  var VERSION = 7;
+  // From here on the version tracks the task number. It had drifted by two:
+  // TASK 5 was a validation-only change that never touched the page, and the
+  // first working map was v1 before the numbered tasks began.
+  var VERSION = 9;
+
+  // Eclipses close enough to plan a trip for: still to come, and within this
+  // calendar year plus two. Today that is exactly 2026-2028; deriving it from
+  // the clock rather than hardcoding those years keeps it true next year.
+  var NEAR_TERM_YEARS = 2;
 
   var SEEN_KEY = 'eclipse.pickerSeen';
 
@@ -246,6 +250,9 @@
 
   function showEclipse(d) {
     data = d;
+    // Marked here rather than in selectEclipse: the eclipse loaded eagerly at
+    // start-up reaches this point directly, and its row must be marked too.
+    markSelected(d.meta.date);
     frames = d.umbra;
     t0 = frames[0].s;
     t1 = frames[frames.length - 1].s;
@@ -294,6 +301,7 @@
     // "Next" is relative to whenever the page is opened, not to build time.
     var today = new Date().toISOString().slice(0, 10);
     var nextIdx = catalog.findIndex(function (e) { return e.date >= today; });
+    var lastNearYear = parseInt(today.slice(0, 4), 10) + NEAR_TERM_YEARS;
 
     var decade = null;
     catalog.forEach(function (e, i) {
@@ -305,8 +313,10 @@
         h.textContent = dec + '-luku';
         el.menu.appendChild(h);
       }
+      var past = e.date < today;
+      var near = !past && parseInt(e.date.slice(0, 4), 10) <= lastNearYear;
       var row = document.createElement('div');
-      row.className = 'row' + (e.date < today ? ' past' : '') +
+      row.className = 'row' + (past ? ' past' : '') + (near ? ' near' : '') +
                       (i === nextIdx ? ' next' : '');
       row.setAttribute('role', 'option');
       row.dataset.date = e.date;
@@ -370,12 +380,16 @@
 
   var pending = null;        // the eclipse the user last asked for
 
-  function selectEclipse(date) {
-    pending = date;
+  function markSelected(date) {
     Object.keys(rowFor).forEach(function (d) {
       rowFor[d].setAttribute('aria-selected', d === date ? 'true' : 'false');
       rowFor[d].classList.remove('active');
     });
+  }
+
+  function selectEclipse(date) {
+    pending = date;
+    markSelected(date);
     if (cache[date]) { showEclipse(cache[date]); return; }
     el.titleInfo.textContent = 'ladataan ' + date + '…';
     var s = document.createElement('script');

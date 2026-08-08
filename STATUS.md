@@ -1,7 +1,7 @@
 # STATUS — Eclipse 2027 → kaikki täydelliset pimennykset 1986–2066
 
 Valmis ja testattu. PLAN.md:n neljä vaatimusta ja viisi hyväksymiskriteeriä
-täyttyvät, ja TASK 2–7 on toteutettu. 51 selaintarkistusta + 7 vertailua
+täyttyvät, ja TASK 2–9 on toteutettu. 63 selaintarkistusta + 7 vertailua
 julkaistuun ennusteeseen menevät läpi.
 
 ## Miten ajetaan
@@ -10,8 +10,8 @@ julkaistuun ennusteeseen menevät läpi.
 # kerran: riippuvuudet
 python3 -m venv .venv && .venv/bin/pip install numpy skyfield
 
-# oletuspimennys 2027-08-02 (n. 9 s; lataa de440s.bsp ensimmäisellä
-# kerralla, ~32 MB)
+# PLAN.md:n pimennys 2027-08-02 + sivun oletus 2026-08-12 (n. 18 s;
+# lataa de440s.bsp ensimmäisellä kerralla, ~32 MB)
 .venv/bin/python gen_data.py
 
 # koko luettelo 1986–2066 (n. 20 s haku + n. 5 min generointi)
@@ -40,7 +40,7 @@ Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 .venv/bin/python check_oracle.py     # 7 vertailua julkaistuun ennusteeseen
 
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
-.venv/bin/python check.py            # 51 tarkistusta oikeassa selaimessa
+.venv/bin/python check.py            # 63 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
 ```
 
@@ -321,6 +321,18 @@ ollut affordanssi. Lista on sarakkeistettu (päivä | tyyppi | kesto | alue),
 jaettu vuosikymmenotsikoilla, menneet himmennetty, valittu korostettu ja
 seuraava tuleva merkitty `SEURAAVA`-lipulla (laskettu selaimen kellosta, ei
 käännösajasta). Versio 7.
+
+### TASK 9 — lähivuodet korostettuna (valmis)
+
+Listassa on nyt kolme korostustasoa eikä enempää: menneet himmennettyinä,
+**matkasuunnitteluetäisyydellä olevat** (tästä vuodesta +2, eli nyt
+2026-08-12, 2027-08-02 ja 2028-07-22) nostettuna keltaisella
+reunapalkilla ja hillityllä pohjalla, muut siltä väliltä. Korostus pysyy
+samassa aksenttisävyssä kuin valittu rivi, joten se ei luo uutta kategoriaa;
+`SEURAAVA`-lippu on ainoa toinen väri. Vuosiraja lasketaan selaimen kellosta,
+joten se pysyy oikeana ensi vuonnakin. **Versionumero seuraa nyt
+tehtävänumeroa** (v9); se oli karannut kaksi jäljessä, koska TASK 5 oli
+pelkkä validointilisä joka ei koskenut sivuun.
 
 ## Validointi
 

@@ -472,6 +472,38 @@ def main():
               tagged == upcoming, f"tagged {tagged}, next is {upcoming}")
         n_past = page.evaluate(
             "document.querySelectorAll('#eclipse-menu .row.past').length")
+        near = page.evaluate(
+            "[...document.querySelectorAll('#eclipse-menu .row.near')]"
+            ".map(r=>r.dataset.date)")
+        this_year = int(page.evaluate("new Date().toISOString().slice(0,4)"))
+        want_near = sorted(e["date"] for e in cat0["eclipses"]
+                           if e["date"] >= page.evaluate(
+                               "new Date().toISOString().slice(0,10)")
+                           and int(e["date"][:4]) <= this_year + 2)
+        check("9f3b. the trip-plannable next few years are highlighted",
+              sorted(near) == want_near and 0 < len(near) < len(rows)
+              and page.evaluate(
+                  "getComputedStyle(document.querySelector"
+                  "('#eclipse-menu .row.near')).boxShadow") != "none",
+              ", ".join(near) if near else "none")
+        # Measure resting states only: the cursor is still parked on the row
+        # clicked above, and :hover is a transient state, not a category.
+        page.mouse.move(1200, 700)
+        page.wait_for_timeout(200)
+        check("9f3c. three levels of row emphasis plus the selected state",
+              len(set(page.evaluate(
+                  "[...document.querySelectorAll('#eclipse-menu .row')]"
+                  ".map(r=>getComputedStyle(r).opacity+'|'"
+                  "+getComputedStyle(r).boxShadow+'|'"
+                  "+getComputedStyle(r).backgroundColor)"))) <= 4,
+              "past / near / plain, plus the selected row")
+        check("9f3d. the eclipse on screen is marked in the list",
+              page.evaluate(
+                  "document.querySelector('#eclipse-menu .row[aria-selected=\"true\"]')"
+                  "?.dataset.date") == page.evaluate("eclipse.data.meta.date"),
+              "marked " + str(page.evaluate(
+                  "document.querySelector('#eclipse-menu .row[aria-selected=\"true\"]')"
+                  "?.dataset.date")))
         check("9f4. past eclipses are dimmed, future ones are not",
               0 < n_past < len(rows)
               and page.evaluate(
@@ -527,8 +559,8 @@ def main():
               dict((d, m) for d, _, m in switched)["2017-08-21"] == 0
               and dict((d, m) for d, _, m in switched)["2027-08-02"] == 9,
               "; ".join(f"{d} {m} markers" for d, _, m in switched))
-        check("9j. version bumped for the card picker",
-              page.evaluate("eclipse.version") >= 6,
+        check("9j. version bumped and now tracks the task number",
+              page.evaluate("eclipse.version") >= 9,
               page.text_content("#version"))
 
         # The first-visit nudge fires once per browser profile, never again.
