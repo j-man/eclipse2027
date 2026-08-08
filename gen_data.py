@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Compute the total solar eclipse of 2027-08-02 from first principles.
+Compute a total solar eclipse from first principles.
 
 No pre-made eclipse paths are downloaded: the only external input is the JPL
-DE421 ephemeris, which skyfield fetches on first run.
+DE440s ephemeris, which skyfield fetches on first run.
 
 Criterion for a point being inside the umbra at time t, as seen by an observer
 standing there:
@@ -19,12 +19,18 @@ whole numpy array of observers is then just a subtraction.  Cross-checked
 against skyfield's full per-observer observe().apparent() pipeline: agreement
 is better than 0.02 arcseconds, i.e. ~5000x finer than the 0.1 deg grid.
 
+Usage:
+    python gen_data.py                  the default eclipse (2027-08-02)
+    python gen_data.py --all            every eclipse listed in data/index.json
+    python gen_data.py --only 2024-04-08
+
 Output:
-    data/eclipse2027.json   canonical data file
-    web/eclipse2027.js      same payload wrapped in a global, so web/index.html
-                            works from a file:// URL without a web server
+    data/eclipse2027.json        canonical data file for the default eclipse
+    web/eclipse2027.js           same payload as a global, so file:// works
+    data/eclipses/YYYY-MM-DD.js  one file per catalogued eclipse, lazy-loaded
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -35,18 +41,23 @@ from skyfield.api import wgs84
 
 # The umbra criterion, the SkyTable and the per-site circumstances live in
 # eclipse_core so that check_oracle.py validates this exact code.
-from eclipse_core import (R_EARTH_KM, R_MOON_KM, R_SUN_KM, SkyTable, earth,
-                          local_circumstances, sun_moon_geocentric, ts,
-                          umbra_margin)
+from eclipse_core import (R_EARTH_KM, R_MOON_KM, R_SUN_KM, SkyTable, classify,
+                          geodetic, local_circumstances, sun_moon_geocentric,
+                          ts, umbra_margin)
 
 # ---------------------------------------------------------------- constants
 
-DATE = (2027, 8, 2)
+DEFAULT_DATE = "2027-08-02"
+
 COARSE_STEP_S = 300.0        # phase 1: whole day, global 1 deg grid
 FINE_STEP_S = 60.0           # phase 2: umbra outline / centre line cadence
 
 N_AZIMUTH = 60               # vertices per umbra outline
 DUR_LEVELS_S = [60, 120, 240, 360]   # 1m / 2m / 4m / 6m duration contours
+
+DUR_WIN_S = 420.0            # totality never exceeds ~7.5 minutes
+DUR_STEP_S = 5.0
+N_OFFSET = 121               # cross-track samples per centre-line point
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,7 +65,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Spain, Gibraltar and Ceuta keep CEST (UTC+2) in August; Tunisia stays on
 # CET (UTC+1) all year; Egypt reinstated summer time in 2023, so 2 August 2027
 # falls inside EEST (UTC+3) under the rules in force today.
-MARKERS = [
+# These are specific to the 2027 eclipse and are only attached to that one.
+MARKERS_2027 = [
     ("Sevilla", 37.3891, -5.9845, 2.0, "CEST"),
     ("Malaga", 36.7213, -4.4214, 2.0, "CEST"),
     ("Cadiz", 36.5271, -6.2886, 2.0, "CEST"),
@@ -70,7 +82,7 @@ t_start_wall = _time.time()
 
 
 def stamp(msg):
-    print(f"[{_time.time() - t_start_wall:5.1f}s] {msg}", flush=True)
+    print(f"[{_time.time() - t_start_wall:6.1f}s] {msg}", flush=True)
 
 
 def r(x, n=3):
@@ -120,46 +132,73 @@ def bearing(lat1, lon1, lat2, lon2):
             + 360.0) % 360.0
 
 
+def near_branch(lon, ref):
+    """Shift lon by whole turns so it lands within 180 deg of ref.
+
+    Paths that cross the antimeridian are emitted as continuous longitudes
+    (..., 179, 181, ...) rather than being split at the seam.  Leaflet draws
+    those straight through into the next world copy, which keeps the band, the
+    centre line and every umbra outline in one piece; splitting would leave a
+    visible gap exactly where the shadow is most interesting.
+    """
+    return lon + 360.0 * np.round((np.asarray(ref) - np.asarray(lon)) / 360.0)
+
+
 # ------------------------------------------------- phase 1: coarse global scan
 
-stamp("phase 1: coarse global scan (1 deg grid, 300 s steps)")
+_c_lat = np.arange(-88.0, 88.001, 1.0)
+_c_lon = np.arange(-180.0, 180.0, 1.0)
+_CLA, _CLO = np.meshgrid(_c_lat, _c_lon, indexing="ij")
+COARSE_LAT, COARSE_LON = _CLA.ravel(), _CLO.ravel()
+COARSE_GRID = wgs84.latlon(COARSE_LAT, COARSE_LON)
 
-c_lat = np.arange(-72.0, 72.001, 1.0)
-c_lon = np.arange(-180.0, 180.0, 1.0)
-CLA, CLO = np.meshgrid(c_lat, c_lon, indexing="ij")
-coarse_lat, coarse_lon = CLA.ravel(), CLO.ravel()
-coarse_grid = wgs84.latlon(coarse_lat, coarse_lon)
 
-t_midnight = ts.utc(*DATE, 0, 0, 0)
-n_coarse = int(86400 / COARSE_STEP_S) + 1
-coarse_times = ts.tt_jd(t_midnight.tt + np.arange(n_coarse) * COARSE_STEP_S / 86400.0)
-c_sg, c_mg = sun_moon_geocentric(coarse_times)
+def coarse_scan(t_midnight):
+    """Sweep the whole day on a 1 degree grid; return the umbra's rough track."""
+    n = int(86400 / COARSE_STEP_S) + 1
+    times = ts.tt_jd(t_midnight.tt + np.arange(n) * COARSE_STEP_S / 86400.0)
+    sg, mg = sun_moon_geocentric(times)
 
-coarse_hits = []   # (seconds since midnight, lat, lon, margin)
-for i in range(n_coarse):
-    op = coarse_grid.at(coarse_times[i]).position.km
-    sv = c_sg[:, i, None] - op
-    mv = c_mg[:, i, None] - op
-    sd = np.linalg.norm(sv, axis=0)
-    md = np.linalg.norm(mv, axis=0)
-    sep = np.arccos(np.clip((sv * mv).sum(axis=0) / (sd * md), -1.0, 1.0))
-    margin = np.arcsin(R_MOON_KM / md) - np.arcsin(R_SUN_KM / sd) - sep
-    margin = np.where((op * sv).sum(axis=0) > 0, margin, -9.9)
-    j = int(np.argmax(margin))
-    if margin[j] > 0:
-        coarse_hits.append((i * COARSE_STEP_S, coarse_lat[j], coarse_lon[j],
-                            float(margin[j])))
+    hits = []   # (seconds since midnight, lat, lon, margin)
+    for i in range(n):
+        op = COARSE_GRID.at(times[i]).position.km
+        sv = sg[:, i, None] - op
+        mv = mg[:, i, None] - op
+        sd = np.linalg.norm(sv, axis=0)
+        md = np.linalg.norm(mv, axis=0)
+        sep = np.arccos(np.clip((sv * mv).sum(axis=0) / (sd * md), -1.0, 1.0))
+        margin = np.arcsin(R_MOON_KM / md) - np.arcsin(R_SUN_KM / sd) - sep
+        margin = np.where((op * sv).sum(axis=0) > 0, margin, -9.9)
+        j = int(np.argmax(margin))
+        if margin[j] > 0:
+            hits.append((i * COARSE_STEP_S, COARSE_LAT[j], COARSE_LON[j],
+                         float(margin[j])))
+    return hits
 
-if not coarse_hits:
-    raise SystemExit("no umbra found on this date")
 
-stamp(f"phase 1 done: {len(coarse_hits)} coarse hits, "
-      f"{coarse_hits[0][0] / 3600:05.2f}h - {coarse_hits[-1][0] / 3600:05.2f}h UTC")
+def axis_scan(t_midnight, sec_hint, half_s=5400.0, step_s=10.0):
+    """Track the umbra along the shadow axis instead of over a grid.
 
-coarse_s = np.array([h[0] for h in coarse_hits])
-coarse_clat = np.array([h[1] for h in coarse_hits])
-coarse_clon = np.unwrap(np.radians(np.array([h[2] for h in coarse_hits])))
-coarse_clon = np.degrees(coarse_clon)
+    The global sweep above walks a 1 degree grid every 300 s, which is blind to
+    a barely-total hybrid whose umbra is a few km across and on the surface for
+    under a minute.  Following the axis finds those exactly, and gives back the
+    same (sec, lat, lon, margin) tuples the rest of the pipeline expects.
+    """
+    sec = np.arange(sec_hint - half_s, sec_hint + half_s + 1e-9, step_s)
+    t = ts.tt_jd(t_midnight.tt + sec / 86400.0)
+    S, M = sun_moon_geocentric(t)
+    P, total, _annular, _ad = classify(S, M)
+    on = np.where(total)[0]
+    if not on.size:
+        return []
+    lat, lon = geodetic(P[:, on], t[on])
+    lat, lon = np.atleast_1d(lat), np.atleast_1d(lon)
+    # margin is only used to pick the seed frame, so the depth proxy can be
+    # crude: the axis point nearest the middle of the window is the deepest.
+    mid = 0.5 * (on[0] + on[-1])
+    depth = 1.0 / (1.0 + np.abs(on - mid))
+    return [(float(sec[k]), float(a), float(b), float(w))
+            for k, a, b, w in zip(on, lat, lon, depth)]
 
 
 # --------------------------------------- phase 2: centre line + umbra outlines
@@ -177,7 +216,7 @@ def refine_centre(t, sg, mg, guess_lat, guess_lon, half0=12.0):
     for half, step in ((half0, half0 / 30.0), (1.2, 0.04), (0.06, 0.002)):
         # A degree of longitude shrinks with latitude; widen the box to keep the
         # search square in kilometres, and clamp so we never wrap past the poles.
-        scale = min(1.0 / max(np.cos(np.radians(lat0)), 0.15), 8.0)
+        scale = min(1.0 / max(np.cos(np.radians(lat0)), 0.05), 20.0)
         la = np.clip(np.arange(-half, half + 1e-9, step) + lat0, -89.9, 89.9)
         lo = np.arange(-half * scale, half * scale + 1e-9, step * scale) + lon0
         A, O = np.meshgrid(la, lo, indexing="ij")
@@ -192,7 +231,8 @@ def umbra_outline(t, sg, mg, lat0, lon0):
     """Trace the umbra edge outward from its centre along N_AZIMUTH bearings."""
     az = np.arange(N_AZIMUTH) * (360.0 / N_AZIMUTH)
     reach = 400.0
-    for _ in range(7):
+    run, radii = None, None
+    for _ in range(8):
         radii = np.linspace(0.0, reach, 220)
         AZ, RR = np.meshgrid(az, radii, indexing="ij")
         la, lo = destination(lat0, lon0, AZ.ravel(), RR.ravel())
@@ -210,13 +250,7 @@ def umbra_outline(t, sg, mg, lat0, lon0):
     return ola, olo, float(edge_km.max())
 
 
-stamp(f"phase 2: centre line and umbra outlines ({FINE_STEP_S:.0f} s steps)")
-
-fine_s = np.arange(coarse_s[0] - COARSE_STEP_S, coarse_s[-1] + COARSE_STEP_S + 1e-9,
-                   FINE_STEP_S)
-
-
-def make_frame(sec, guess_lat, guess_lon, half0):
+def make_frame(t_midnight, sec, guess_lat, guess_lon, half0):
     t = ts.tt_jd(t_midnight.tt + sec / 86400.0)
     sg, mg = sun_moon_geocentric(t)
     lat, lon, margin = refine_centre(t, sg, mg, guess_lat, guess_lon, half0)
@@ -227,7 +261,7 @@ def make_frame(sec, guess_lat, guess_lon, half0):
             "outline_lat": ola, "outline_lon": olo, "reach": reach}
 
 
-def track(indices, seed):
+def track(t_midnight, fine_s, indices, seed):
     """Follow the umbra centre step by step, seeded from a known good frame.
 
     Each step is predicted by extrapolating the previous two centres, and the
@@ -246,8 +280,8 @@ def track(indices, seed):
             g_lat = prev[0] + dlat
             g_lon = prev[1] + dlon
             step = np.hypot(dlat, dlon * np.cos(np.radians(prev[0])))
-            half = float(np.clip(1.3 * step, 2.0, 20.0))
-        fr = make_frame(fine_s[i], g_lat, g_lon, half)
+            half = float(np.clip(1.3 * step, 2.0, 25.0))
+        fr = make_frame(t_midnight, fine_s[i], g_lat, g_lon, half)
         if fr is None:
             break
         out.append(fr)
@@ -255,23 +289,9 @@ def track(indices, seed):
     return out
 
 
-# Seed at the deepest coarse hit, where the shadow axis is well inside the Earth
-# and the margin maximum is sharp, then walk outwards in both directions.
-seed_hit = max(coarse_hits, key=lambda h: h[3])
-i_seed = int(np.argmin(np.abs(fine_s - seed_hit[0])))
-seed_frame = make_frame(fine_s[i_seed], seed_hit[1], seed_hit[2], 12.0)
-if seed_frame is None:
-    raise SystemExit("could not seed the centre-line track")
-seed = (seed_frame["lat"], seed_frame["lon"])
-
-back = track(range(i_seed - 1, -1, -1), seed)
-fwd = track(range(i_seed + 1, fine_s.size), seed)
-frames = back[::-1] + [seed_frame] + fwd
-
-# Trim any leading/trailing frame that steps backwards along the path: at the
-# very first and last instants the umbra only grazes the limb and its centre is
-# not yet well defined.
 def forward_only(fs):
+    """Drop leading frames whose step reverses: at the first and last instants
+    the umbra only grazes the limb and its centre is not yet well defined."""
     keep = list(fs)
     while len(keep) > 2:
         d0 = bearing(keep[0]["lat"], keep[0]["lon"], keep[1]["lat"], keep[1]["lon"])
@@ -282,29 +302,7 @@ def forward_only(fs):
     return keep
 
 
-frames = forward_only(forward_only(frames)[::-1])[::-1]
-
-stamp(f"phase 2 done: {len(frames)} frames, "
-      f"{frames[0]['s'] / 3600:05.2f}h - {frames[-1]['s'] / 3600:05.2f}h UTC")
-
-clat = np.array([f["lat"] for f in frames])
-clon = np.array([f["lon"] for f in frames])
-csec = np.array([f["s"] for f in frames])
-
-# Direction of travel at each centre-line point (forward/backward difference).
-brg = np.empty(len(frames))
-for i in range(len(frames)):
-    a = max(i - 1, 0)
-    b = min(i + 1, len(frames) - 1)
-    brg[i] = bearing(clat[a], clon[a], clat[b], clon[b])
-
-
 # ------------------------------- phase 3: durations, path limits, duration lines
-
-DUR_WIN_S = 420.0     # totality never exceeds ~7 minutes
-DUR_STEP_S = 5.0
-N_OFFSET = 121        # cross-track samples per centre-line point
-
 
 def durations_for(sky, points_lat, points_lon, centre_sec):
     """Totality duration in seconds for each point, sampled around centre_sec."""
@@ -318,9 +316,9 @@ def durations_for(sky, points_lat, points_lon, centre_sec):
     first = np.where(has, np.argmax(inside, axis=1), 0)
     last = np.where(has, nt - 1 - np.argmax(inside[:, ::-1], axis=1), 0)
     # sub-step refinement of the two zero crossings of the margin
-    r = np.arange(npt)
-    a0, a1 = m[r, np.maximum(first - 1, 0)], m[r, first]
-    b1, b0 = m[r, last], m[r, np.minimum(last + 1, nt - 1)]
+    rr = np.arange(npt)
+    a0, a1 = m[rr, np.maximum(first - 1, 0)], m[rr, first]
+    b1, b0 = m[rr, last], m[rr, np.minimum(last + 1, nt - 1)]
     lead = np.where((first > 0) & (a1 > a0), a1 / np.where(a1 > a0, a1 - a0, 1.0), 0.0)
     trail = np.where((last < nt - 1) & (b1 > b0), b1 / np.where(b1 > b0, b1 - b0, 1.0), 0.0)
     dur = inside.sum(axis=1) * step - step + (lead + trail) * step
@@ -365,51 +363,7 @@ def cross(level, offs, dur):
     return out
 
 
-stamp("phase 3: durations, path limits and duration contours")
-
-sky = SkyTable(t_midnight, np.arange(frames[0]["s"] - DUR_WIN_S - 60.0,
-                         frames[-1]["s"] + DUR_WIN_S + 60.0 + 1e-9, DUR_STEP_S))
-
-centre_dur = np.zeros(len(frames))
-limit_n, limit_s = [], []
-contours = {lv: ([], []) for lv in DUR_LEVELS_S}
-
-for i, fr in enumerate(frames):
-    span = max(fr["reach"] * 1.6, 60.0)
-    offs = np.linspace(-span, span, N_OFFSET)
-    # positive offset = to the left of travel = north side of the path
-    pla, plo = destination(fr["lat"], fr["lon"], brg[i] - 90.0, offs)
-    dur = durations_for(sky, pla, plo, fr["s"])
-    centre_dur[i] = float(np.interp(0.0, offs, dur))
-
-    zs, zn = cross(0.5, offs, dur)
-    if zs is not None:
-        la, lo = destination(fr["lat"], fr["lon"], brg[i] - 90.0, zs)
-        limit_s.append((float(la), float(lo)))
-    if zn is not None:
-        la, lo = destination(fr["lat"], fr["lon"], brg[i] - 90.0, zn)
-        limit_n.append((float(la), float(lo)))
-    for lv in DUR_LEVELS_S:
-        cs, cn = cross(float(lv), offs, dur)
-        for k, c in ((0, cs), (1, cn)):
-            if c is not None:
-                la, lo = destination(fr["lat"], fr["lon"], brg[i] - 90.0, c)
-                contours[lv][k].append((float(la), float(lo)))
-
-imax = int(np.argmax(centre_dur))
-stamp(f"phase 3 done: max duration {centre_dur[imax]:.0f} s "
-      f"({int(centre_dur[imax]) // 60}m{int(centre_dur[imax]) % 60:02d}s) at "
-      f"{clat[imax]:.2f}, {clon[imax]:.2f}")
-
-
-# ------------------------------------------------------- marker circumstances
-
-stamp("markers: local circumstances")
-marker_sky = SkyTable(t_midnight, np.arange(frames[0]["s"] - 7200.0,
-                                frames[-1]["s"] + 7200.0 + 1e-9, 2.0))
-
-
-def dist_to_path_km(lat, lon):
+def dist_to_path_km(limit_n, limit_s, lat, lon):
     """Great-circle distance to the nearer edge of the path of totality.
 
     Measured to the limit polylines as segments, not just their vertices, so a
@@ -419,8 +373,11 @@ def dist_to_path_km(lat, lon):
     best = np.inf
     for line in (limit_n, limit_s):
         a = np.array(line)
-        ay, ax = a[:-1, 0] - lat, (a[:-1, 1] - lon) * kx
-        by, bx = a[1:, 0] - lat, (a[1:, 1] - lon) * kx
+        if a.shape[0] < 2:
+            continue
+        wrap = lambda d: (d + 540.0) % 360.0 - 180.0        # noqa: E731
+        ay, ax = a[:-1, 0] - lat, wrap(a[:-1, 1] - lon) * kx
+        by, bx = a[1:, 0] - lat, wrap(a[1:, 1] - lon) * kx
         vy, vx = by - ay, bx - ax
         len2 = vx * vx + vy * vy
         u = np.clip(np.where(len2 > 0, -(ax * vx + ay * vy) / np.where(len2 > 0, len2, 1),
@@ -430,71 +387,256 @@ def dist_to_path_km(lat, lon):
     return best * 111.195
 
 
-def circumstances(lat, lon):
-    """Local circumstances, plus how far outside the path a partial site sits."""
-    out = local_circumstances(marker_sky, lat, lon)
-    if "duration" not in out:
-        out["dist_to_path_km"] = round(dist_to_path_km(lat, lon), 1)
-    return out
+# ------------------------------------------------------------------ pipeline
+
+def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
+    """Full pipeline for one eclipse date ("YYYY-MM-DD"). None if no umbra.
+
+    `seed_utc` is "HH:MM:SS" of greatest eclipse when it is already known; it
+    lets the axis scan take over for umbrae the global grid cannot see.
+    """
+    y, mo, d = (int(x) for x in date.split("-"))
+    t_midnight = ts.utc(y, mo, d, 0, 0, 0)
+    say = stamp if verbose else (lambda _m: None)
+
+    if coarse_hits is None:
+        say("  phase 1: coarse global scan")
+        coarse_hits = coarse_scan(t_midnight)
+        if not coarse_hits and seed_utc:
+            h, m, s = (int(v) for v in seed_utc.split(":"))
+            say("  phase 1: grid found nothing, following the shadow axis")
+            coarse_hits = axis_scan(t_midnight, h * 3600 + m * 60 + s)
+    if not coarse_hits:
+        return None
+
+    coarse_s = np.array([h[0] for h in coarse_hits])
+    coarse_clat = np.array([h[1] for h in coarse_hits])
+    coarse_clon = np.degrees(np.unwrap(np.radians([h[2] for h in coarse_hits])))
+
+    # Enough frames to animate however brief the total phase is: a hybrid that
+    # is total for half a minute needs seconds per frame, not a whole minute.
+    span = float(coarse_s[-1] - coarse_s[0])
+    step = FINE_STEP_S
+    while step > 1.0 and span / step < 24.0:
+        step /= 2.0
+    pad = max(COARSE_STEP_S if span > 600 else step * 4, step)
+
+    say(f"  phase 2: centre line and umbra outlines ({step:.0f} s steps)")
+    fine_s = np.arange(coarse_s[0] - pad, coarse_s[-1] + pad + 1e-9, step)
+
+    # Seed at the deepest coarse hit, where the shadow axis is well inside the
+    # Earth and the margin maximum is sharp, then walk outwards both ways.
+    seed_hit = max(coarse_hits, key=lambda h: h[3])
+    i_seed = int(np.argmin(np.abs(fine_s - seed_hit[0])))
+    seed_frame = make_frame(t_midnight, fine_s[i_seed], seed_hit[1], seed_hit[2], 12.0)
+    if seed_frame is None:
+        return None
+    seed = (seed_frame["lat"], seed_frame["lon"])
+
+    back = track(t_midnight, fine_s, range(i_seed - 1, -1, -1), seed)
+    fwd = track(t_midnight, fine_s, range(i_seed + 1, fine_s.size), seed)
+    frames = back[::-1] + [seed_frame] + fwd
+    frames = forward_only(forward_only(frames)[::-1])[::-1]
+    if len(frames) < 3:
+        return None
+
+    clat = np.array([f["lat"] for f in frames])
+    csec = np.array([f["s"] for f in frames])
+    # Continuous longitudes, so a path over the antimeridian stays in one piece.
+    clon = np.degrees(np.unwrap(np.radians([f["lon"] for f in frames])))
+
+    brg = np.empty(len(frames))
+    for i in range(len(frames)):
+        a = max(i - 1, 0)
+        b = min(i + 1, len(frames) - 1)
+        brg[i] = bearing(clat[a], clon[a], clat[b], clon[b])
+
+    say("  phase 3: durations, path limits and duration contours")
+    sky = SkyTable(t_midnight,
+                   np.arange(frames[0]["s"] - DUR_WIN_S - 60.0,
+                             frames[-1]["s"] + DUR_WIN_S + 60.0 + 1e-9, DUR_STEP_S))
+
+    centre_dur = np.zeros(len(frames))
+    limit_n, limit_s = [], []
+    contours = {lv: ([], []) for lv in DUR_LEVELS_S}
+
+    for i, fr in enumerate(frames):
+        span = max(fr["reach"] * 1.6, 60.0)
+        offs = np.linspace(-span, span, N_OFFSET)
+        # positive offset = to the left of travel = north side of the path
+        pla, plo = destination(clat[i], clon[i], brg[i] - 90.0, offs)
+        dur = durations_for(sky, pla, plo, fr["s"])
+        centre_dur[i] = float(np.interp(0.0, offs, dur))
+
+        zs, zn = cross(0.5, offs, dur)
+        for bucket, off in ((limit_s, zs), (limit_n, zn)):
+            if off is not None:
+                la, lo = destination(clat[i], clon[i], brg[i] - 90.0, off)
+                bucket.append((float(la), float(near_branch(lo, clon[i]))))
+        for lv in DUR_LEVELS_S:
+            cs, cn = cross(float(lv), offs, dur)
+            for k, c in ((0, cs), (1, cn)):
+                if c is not None:
+                    la, lo = destination(clat[i], clon[i], brg[i] - 90.0, c)
+                    contours[lv][k].append((float(la), float(near_branch(lo, clon[i]))))
+
+    imax = int(np.argmax(centre_dur))
+    say(f"  max duration {centre_dur[imax]:.0f} s "
+        f"({int(centre_dur[imax]) // 60}m{int(centre_dur[imax]) % 60:02d}s) at "
+        f"{clat[imax]:.2f}, {clon[imax]:.2f}")
+
+    site_data = []
+    if markers:
+        marker_sky = SkyTable(t_midnight,
+                              np.arange(frames[0]["s"] - 7200.0,
+                                        frames[-1]["s"] + 7200.0 + 1e-9, 2.0))
+        for name, lat, lon, tzoff, tzname in markers:
+            c = local_circumstances(marker_sky, lat, lon)
+            if "duration" not in c:
+                c["dist_to_path_km"] = round(dist_to_path_km(limit_n, limit_s,
+                                                             lat, lon), 1)
+            c.update(name=name, tz_offset_h=tzoff, tz_name=tzname)
+            site_data.append(c)
+            if "duration" in c:
+                dd = int(round(c["duration"]))
+                say(f"  {name:24s} totality {dd // 60}m{dd % 60:02d}s"
+                    f"  max {hhmmss(c['max_s'])} UTC")
+            else:
+                say(f"  {name:24s} OUTSIDE the path: magnitude "
+                    f"{c.get('max_magnitude', 0):.3f}, "
+                    f"{c['dist_to_path_km']:.0f} km from the nearest limit")
+
+    payload = {
+        "meta": {
+            "date": date,
+            "step_s": step,
+            "t_start_s": r(frames[0]["s"], 0),
+            "t_end_s": r(frames[-1]["s"], 0),
+            "max_duration_s": r(centre_dur[imax], 1),
+            "max_duration_at": [r(clat[imax], 4), r(clon[imax], 4), hhmmss(csec[imax])],
+            "source": "computed with skyfield + JPL DE440s",
+        },
+        "path": {
+            "center": [[r(clat[i], 4), r(clon[i], 4), hhmmss(csec[i]), r(centre_dur[i], 1)]
+                       for i in range(len(frames))],
+            "north": [[r(a, 4), r(b, 4)] for a, b in limit_n],
+            "south": [[r(a, 4), r(b, 4)] for a, b in limit_s],
+        },
+        "contours": {str(lv): {"north": [[r(a, 4), r(b, 4)] for a, b in contours[lv][1]],
+                               "south": [[r(a, 4), r(b, 4)] for a, b in contours[lv][0]]}
+                     for lv in DUR_LEVELS_S},
+        "umbra": [{"t": hhmmss(f["s"]), "s": r(f["s"], 0),
+                   "c": [r(clat[i], 4), r(clon[i], 4)],
+                   "poly": [[r(a, 3), r(near_branch(b, clon[i]), 3)]
+                            for a, b in zip(f["outline_lat"], f["outline_lon"])]}
+                  for i, f in enumerate(frames)],
+        "markers": site_data,
+    }
+    h = git_short_hash()
+    if h:
+        payload["meta"]["git"] = h
+    return payload
 
 
-markers = []
-for name, lat, lon, tzoff, tzname in MARKERS:
-    c = circumstances(lat, lon)
-    c.update(name=name, tz_offset_h=tzoff, tz_name=tzname)
-    markers.append(c)
-    if "duration" in c:
-        d = int(round(c["duration"]))
-        stamp(f"{name:24s} totality {d // 60}m{d % 60:02d}s"
-              f"  max {hhmmss(c['max_s'])} UTC")
-    else:
-        stamp(f"{name:24s} OUTSIDE the path of totality: magnitude "
-              f"{c.get('max_magnitude', 0):.3f}, {c['dist_to_path_km']:.0f} km "
-              f"from the nearest limit")
+# --------------------------------------------------------------- entry points
+
+def write_default(payload):
+    """The default eclipse keeps its own two files, as the page expects."""
+    js = json.dumps(payload, separators=(",", ":"))
+    os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
+    os.makedirs(os.path.join(HERE, "web"), exist_ok=True)
+    with open(os.path.join(HERE, "data", "eclipse2027.json"), "w") as fh:
+        fh.write(js)
+    with open(os.path.join(HERE, "web", "eclipse2027.js"), "w") as fh:
+        fh.write("window.ECLIPSE_DATA=" + js + ";\n")
+    return len(js)
 
 
-# --------------------------------------------------------------- write output
+def write_catalogued(payload):
+    """One lazy-loaded file per eclipse, handed to the page via a callback."""
+    out = os.path.join(HERE, "data", "eclipses")
+    os.makedirs(out, exist_ok=True)
+    js = json.dumps(payload, separators=(",", ":"))
+    with open(os.path.join(out, payload["meta"]["date"] + ".js"), "w") as fh:
+        fh.write("window.ECLIPSE_LOAD(" + js + ");\n")
+    return len(js)
 
-payload = {
-    "meta": {
-        "date": f"{DATE[0]:04d}-{DATE[1]:02d}-{DATE[2]:02d}",
-        "step_s": FINE_STEP_S,
-        "t_start_s": r(frames[0]["s"], 0),
-        "t_end_s": r(frames[-1]["s"], 0),
-        "max_duration_s": r(centre_dur[imax], 1),
-        "max_duration_at": [r(clat[imax], 4), r(clon[imax], 4), hhmmss(csec[imax])],
-        "source": "computed with skyfield + JPL DE421",
-    },
-    # meta.git is filled in below only when a hash is actually available.
-    "path": {
-        "center": [[r(clat[i], 4), r(clon[i], 4), hhmmss(csec[i]), r(centre_dur[i], 1)]
-                   for i in range(len(frames))],
-        "north": [[r(a, 4), r(b, 4)] for a, b in limit_n],
-        "south": [[r(a, 4), r(b, 4)] for a, b in limit_s],
-    },
-    "contours": {str(lv): {"north": [[r(a, 4), r(b, 4)] for a, b in contours[lv][1]],
-                           "south": [[r(a, 4), r(b, 4)] for a, b in contours[lv][0]]}
-                 for lv in DUR_LEVELS_S},
-    "umbra": [{"t": hhmmss(f["s"]), "s": r(f["s"], 0),
-               "c": [r(f["lat"], 4), r(f["lon"], 4)],
-               "poly": [[r(a, 3), r(b, 3)]
-                        for a, b in zip(f["outline_lat"], f["outline_lon"])]}
-              for f in frames],
-    "markers": markers,
-}
 
-_hash = git_short_hash()
-if _hash:
-    payload["meta"]["git"] = _hash
-stamp(f"build stamp: {'git ' + _hash if _hash else 'no git checkout, version only'}")
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--all", action="store_true",
+                    help="generate every eclipse in data/index.json")
+    ap.add_argument("--only", metavar="YYYY-MM-DD",
+                    help="generate a single catalogued eclipse")
+    args = ap.parse_args()
 
-os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
-os.makedirs(os.path.join(HERE, "web"), exist_ok=True)
-js = json.dumps(payload, separators=(",", ":"))
-with open(os.path.join(HERE, "data", "eclipse2027.json"), "w") as fh:
-    fh.write(js)
-with open(os.path.join(HERE, "web", "eclipse2027.js"), "w") as fh:
-    fh.write("window.ECLIPSE_DATA=" + js + ";\n")
+    if not (args.all or args.only):
+        stamp(f"generating the default eclipse {DEFAULT_DATE}")
+        payload = generate(DEFAULT_DATE, MARKERS_2027)
+        if payload is None:
+            raise SystemExit("no umbra found on " + DEFAULT_DATE)
+        size = write_default(payload)
+        write_catalogued(payload)
+        stamp(f"wrote data/eclipse2027.json and web/eclipse2027.js "
+              f"({size / 1024:.0f} kB)")
+        return
 
-stamp(f"wrote data/eclipse2027.json and web/eclipse2027.js ({len(js) / 1024:.0f} kB)")
-stamp("done")
+    index_path = os.path.join(HERE, "data", "index.json")
+    if not os.path.exists(index_path):
+        raise SystemExit("data/index.json missing - run find_eclipses.py first")
+    index = json.load(open(index_path))
+    catalog = index["eclipses"]
+    if args.only:
+        catalog = [e for e in catalog if e["date"] == args.only]
+        if not catalog:
+            raise SystemExit(args.only + " is not in the catalog")
+
+    total, failed = 0, []
+    for n, e in enumerate(catalog, 1):
+        date = e["date"]
+        stamp(f"[{n}/{len(catalog)}] {date} ({e['type']})")
+        try:
+            payload = generate(date,
+                               MARKERS_2027 if date == DEFAULT_DATE else (),
+                               verbose=False, seed_utc=e.get("greatest_utc"))
+        except Exception as exc:                      # keep the batch going
+            failed.append((date, repr(exc)))
+            stamp(f"    FAILED: {exc!r}")
+            continue
+        if payload is None:
+            failed.append((date, "no umbra on the surface"))
+            stamp("    FAILED: no umbra on the surface")
+            continue
+        size = write_catalogued(payload)
+        total += size
+        if date == DEFAULT_DATE:
+            write_default(payload)
+        # The discovery pass only estimated the duration at the greatest-eclipse
+        # point; replace it with the pipeline's own maximum over the centre line.
+        m = payload["meta"]
+        e["max_duration_s"] = m["max_duration_s"]
+        e["greatest_lat"], e["greatest_lon"] = m["max_duration_at"][:2]
+        e["frames"] = len(payload["umbra"])
+        stamp(f"    {m['max_duration_s']:.0f} s max, "
+              f"{len(payload['umbra'])} frames, {size / 1024:.0f} kB")
+
+    if not args.only:
+        # Anything that failed to generate has no data file, so it must not stay
+        # in the catalogue the page builds its dropdown from.
+        index["eclipses"] = [e for e in index["eclipses"]
+                             if e["date"] not in {d for d, _ in failed}]
+        index["count"] = len(index["eclipses"])
+        index["total_bytes"] = total
+    with open(index_path, "w") as fh:
+        json.dump(index, fh, indent=1)
+    from find_eclipses import write_index_js
+    write_index_js(index)
+
+    stamp(f"done: {len(catalog) - len(failed)}/{len(catalog)} generated, "
+          f"{total / 1048576:.1f} MB total")
+    for date, why in failed:
+        stamp(f"  FAILED {date}: {why}")
+
+
+if __name__ == "__main__":
+    main()

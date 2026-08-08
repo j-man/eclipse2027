@@ -21,7 +21,7 @@ R_MOON_KM = 1737.4
 R_EARTH_KM = 6371.0
 
 ts = load.timescale()
-eph = load("de421.bsp")
+eph = load("de440s.bsp")
 earth, sun, moon = eph["earth"], eph["sun"], eph["moon"]
 
 
@@ -92,6 +92,86 @@ class SkyTable:
         m = np.arcsin(R_MOON_KM / md) - np.arcsin(R_SUN_KM / sd) - sep
         up = op / np.linalg.norm(op, axis=0)
         return np.where((up * sv).sum(axis=0) > 0, m, -9.9), sep, sd, md
+
+
+# --------------------------------------------------------------- shadow axis
+#
+# The axis is the line from the Sun's centre through the Moon's centre. Where it
+# meets the ellipsoid is the deepest point of the shadow, so testing the umbra
+# criterion there answers "is anyone seeing totality right now" exactly, for an
+# umbra of any size. A lat/lon grid coarse enough to sweep decades would step
+# straight over the few-kilometre umbra of a barely-total hybrid eclipse.
+
+A_KM, F = 6378.137, 1.0 / 298.257223563
+B_KM = A_KM * (1.0 - F)
+E2 = 2 * F - F * F
+
+
+def axis_surface_point(S, M):
+    """Where the Sun-Moon axis meets the WGS84 ellipsoid, in GCRS km.
+
+    Returns (P, hits): P is the sunward intersection, or the closest point on
+    the ellipsoid when the axis misses it entirely (a grazing eclipse can still
+    put part of the umbra on the limb).  Scaling z by a/b turns the ellipsoid
+    into a sphere, so the ray test is the ordinary quadratic.
+    """
+    k = A_KM / B_KM
+    Ss = np.array([S[0], S[1], S[2] * k])
+    Ms = np.array([M[0], M[1], M[2] * k])
+    d = Ms - Ss
+    u = d / np.linalg.norm(d, axis=0)
+    b = (Ms * u).sum(axis=0)
+    c = (Ms * Ms).sum(axis=0) - A_KM ** 2
+    disc = b * b - c
+    hits = disc >= 0.0
+    t_hit = -b - np.sqrt(np.maximum(disc, 0.0))
+    perp = Ms - b * u
+    perp_len = np.linalg.norm(perp, axis=0)
+    P_miss = perp * (A_KM / np.where(perp_len > 0, perp_len, 1.0))
+    P = np.where(hits, Ms + t_hit * u, P_miss)
+    return np.array([P[0], P[1], P[2] / k]), hits
+
+
+def classify(S, M):
+    """total / annular flags at the axis point, for each column of S and M.
+
+    Also returns how far the axis passes from the Earth's centre, which is the
+    standard definition of the instant of greatest eclipse.
+    """
+    P, hits = axis_surface_point(S, M)
+    sv, mv = S - P, M - P
+    sd = np.linalg.norm(sv, axis=0)
+    md = np.linalg.norm(mv, axis=0)
+    sep = np.arccos(np.clip((sv * mv).sum(axis=0) / (sd * md), -1.0, 1.0))
+    rs = np.arcsin(R_SUN_KM / sd)
+    rm = np.arcsin(R_MOON_KM / md)
+    up = P / np.linalg.norm(P, axis=0)
+    sunlit = (up * sv).sum(axis=0) > 0
+    total = (rm - rs - sep > 0) & sunlit
+    annular = (rs - rm - sep > 0) & sunlit & hits
+
+    u = (M - S) / np.linalg.norm(M - S, axis=0)
+    axis_dist = np.linalg.norm(M - (M * u).sum(axis=0) * u, axis=0)
+    return P, total, annular, axis_dist
+
+
+def geodetic(P, t):
+    """GCRS km -> (lat, lon) degrees on the WGS84 ellipsoid.
+
+    rotation_at gives GCRS -> ITRS, so the contraction runs over the matrix's
+    column index; contracting the row index instead applies the inverse and
+    silently mirrors every longitude.
+    """
+    rot = itrs.rotation_at(t)
+    xyz = rot @ P if rot.ndim == 2 else np.einsum("rci,ci->ri", rot, P)
+    x, y, z = xyz
+    lon = np.degrees(np.arctan2(y, x))
+    p = np.hypot(x, y)
+    lat = np.arctan2(z, p * (1 - E2))
+    for _ in range(5):                                    # Bowring iteration
+        n = A_KM / np.sqrt(1 - E2 * np.sin(lat) ** 2)
+        lat = np.arctan2(z + n * E2 * np.sin(lat), p)
+    return np.degrees(lat), (lon + 540.0) % 360.0 - 180.0
 
 
 def edge_cross(sec, f, i, forward):

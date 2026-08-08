@@ -340,6 +340,85 @@ def main():
         page.set_viewport_size({"width": 1440, "height": 900})
         page.wait_for_timeout(400)
 
+        # 8. the 1986-2066 catalogue
+        #
+        # Reference facts as stated in TASK6.md; the durations published for
+        # these eclipses are 2017 = 2m40s and 2024 = 4m28s, and ours run ~2 s
+        # long from the lunar-radius convention (see check_oracle.py).
+        cat = json.load(open(os.path.join(HERE, "data", "index.json")))
+        rows = {e["date"]: e for e in cat["eclipses"]}
+        KNOWN = ["1991-07-11", "1999-08-11", "2009-07-22", "2017-08-21",
+                 "2024-04-08", "2026-08-12", "2027-08-02"]
+        check("8a. catalogue size is in the expected range",
+              55 <= len(rows) <= 65, f"{len(rows)} eclipses with a total phase")
+        missing = [d for d in KNOWN if d not in rows]
+        check("8b. every known eclipse was discovered, dates exact",
+              not missing, "missing: " + ", ".join(missing) if missing
+              else "all 7 present")
+        check("8c. catalogue is sorted and spans 1986-2066",
+              sorted(rows) == list(rows)
+              and rows and min(rows)[:4] >= "1986" and max(rows)[:4] <= "2066",
+              f"{min(rows)} .. {max(rows)}")
+        check("8d. only total and hybrid types",
+              {e["type"] for e in cat["eclipses"]} <= {"total", "hybrid"},
+              ", ".join(sorted({e["type"] for e in cat["eclipses"]})))
+
+        c21 = {d: e for d, e in rows.items() if d >= "2001"}
+        longest21 = max(c21, key=lambda d: c21[d]["max_duration_s"])
+        check("8e. 2009-07-22 is the longest of the 21st century, ~6m39s",
+              longest21 == "2009-07-22"
+              and abs(c21["2009-07-22"]["max_duration_s"] - 399) <= 6,
+              f"{longest21} at {c21[longest21]['max_duration_s']:.0f} s "
+              f"(published 6m39s = 399 s)")
+
+        SPOT = [("2017-08-21", 160.2, "Hopkinsville KY"),
+                ("2024-04-08", 268.1, "Torreon, Mexico")]
+        for date, pub, where in SPOT:
+            got = rows[date]["max_duration_s"]
+            check(f"8f. {date} max duration matches published ({where})",
+                  abs(got - pub) <= 5.0,
+                  f"{got:.1f} s vs {pub:.1f} s published ({got - pub:+.1f} s)")
+
+        # Every catalogued eclipse must have a data file the page can load.
+        eclipse_dir = os.path.join(HERE, "data", "eclipses")
+        absent = [d for d in rows if not os.path.exists(
+            os.path.join(eclipse_dir, d + ".js"))]
+        check("8g. every catalogued eclipse has a generated data file",
+              not absent, "missing: " + ", ".join(absent[:4]) if absent
+              else f"{len(rows)} files")
+
+        # 9. the picker drives the map
+        page.goto(URL)
+        page.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        page.wait_for_timeout(2500)
+        opts = page.evaluate("document.getElementById('picker').options.length")
+        check("9a. picker lists the whole catalogue",
+              opts == len(rows), f"{opts} options")
+        check("9b. default selection is 2027-08-02",
+              page.evaluate("document.getElementById('picker').value") == "2027-08-02"
+              and page.evaluate("eclipse.data.meta.date") == "2027-08-02")
+
+        switched = []
+        for date in ("2024-04-08", "2017-08-21", "2027-08-02"):
+            page.evaluate("eclipse.select('%s')" % date)
+            try:
+                page.wait_for_function(
+                    "eclipse.data.meta.date === '%s'" % date, timeout=10000)
+                switched.append((date, page.evaluate("eclipse.data.umbra.length"),
+                                 page.evaluate("Object.keys(eclipse.markers).length")))
+            except Exception:
+                switched.append((date, 0, 0))
+        check("9c. picking another eclipse lazy-loads and rebuilds it",
+              all(f > 10 for _, f, _ in switched),
+              "; ".join(f"{d} {f} frames" for d, f, _ in switched))
+        check("9d. site markers appear only for 2027",
+              dict((d, m) for d, _, m in switched)["2024-04-08"] == 0
+              and dict((d, m) for d, _, m in switched)["2027-08-02"] == 9,
+              "; ".join(f"{d} {m} markers" for d, _, m in switched))
+        check("9e. version badge bumped for the catalogue release",
+              page.evaluate("eclipse.version") >= 5,
+              page.text_content("#version"))
+
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",
               all(len(data["contours"][k]["north"]) > 10 for k in data["contours"]),

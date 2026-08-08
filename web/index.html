@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Täydellinen auringonpimennys 2.8.2027</title>
+<title>Täydelliset auringonpimennykset 1986–2066</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -14,8 +14,9 @@
 <div id="version"></div>
 
 <div id="title">
-  <h1>Täydellinen auringonpimennys</h1>
-  <p><span id="title-date">2. elokuuta 2027</span> · <span id="title-max"></span></p>
+  <h1>Täydelliset auringonpimennykset</h1>
+  <select id="picker" aria-label="Valitse pimennys"></select>
+  <p id="title-info"></p>
   <p class="hint">Klikkaa karttaa: kello siirtyy siihen hetkeen</p>
 </div>
 
@@ -33,12 +34,15 @@
   </div>
   <div id="clock">
     <div id="clock-time">--:--:--</div>
-    <div id="clock-date">UTC · 2 AUG</div>
+    <div id="clock-date">UTC</div>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Data as a plain script assignment so the page also works from a file:// URL. -->
+<!-- Data as plain script assignments so the page also works from a file:// URL.
+     The catalogue is small and always loaded; each eclipse's geometry is pulled
+     in on demand from ../data/eclipses/ when it is picked. -->
+<script src="eclipse-index.js"></script>
 <script src="eclipse2027.js"></script>
 <script src="app.js"></script>
 </body>

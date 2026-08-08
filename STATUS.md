@@ -1,6 +1,8 @@
-# STATUS — Eclipse 2027
+# STATUS — Eclipse 2027 → kaikki täydelliset pimennykset 1986–2066
 
-Valmis ja testattu. Kaikki neljä vaatimusta ja viisi hyväksymiskriteeriä täyttyvät.
+Valmis ja testattu. PLAN.md:n neljä vaatimusta ja viisi hyväksymiskriteeriä
+täyttyvät, ja TASK 2–6 on toteutettu. 45 selaintarkistusta + 7 vertailua
+julkaistuun ennusteeseen menevät läpi.
 
 ## Miten ajetaan
 
@@ -8,18 +10,26 @@ Valmis ja testattu. Kaikki neljä vaatimusta ja viisi hyväksymiskriteeriä täy
 # kerran: riippuvuudet
 python3 -m venv .venv && .venv/bin/pip install numpy skyfield
 
-# data (n. 9 s; lataa de421.bsp ensimmäisellä kerralla, ~17 MB)
+# oletuspimennys 2027-08-02 (n. 9 s; lataa de440s.bsp ensimmäisellä
+# kerralla, ~32 MB)
 .venv/bin/python gen_data.py
+
+# koko luettelo 1986–2066 (n. 20 s haku + n. 5 min generointi)
+.venv/bin/python find_eclipses.py         # → data/index.json (59 pimennystä)
+.venv/bin/python gen_data.py --all        # → data/eclipses/YYYY-MM-DD.js
 
 # sivu: avaa suoraan selaimessa
 xdg-open web/index.html
-# tai
-cd web && python3 -m http.server 8000     # → http://localhost:8000
+# tai palvele projektin JUURESTA (ei web/-hakemistosta)
+python3 -m http.server 8000               # → http://localhost:8000/web/
 ```
 
-Molemmat toimivat. `web/index.html` lataa datan `web/eclipse2027.js`:stä
-`<script>`-tagilla, joten `file://` ei törmää fetch()-CORS-rajoitukseen.
-`gen_data.py` kirjoittaa saman sisällön myös muodossa `data/eclipse2027.json`.
+Molemmat toimivat. `web/index.html` lataa oletuspimennyksen ja luettelon
+`<script>`-tageilla, joten `file://` ei törmää fetch()-CORS-rajoitukseen, ja
+muiden pimennysten data haetaan tarvittaessa `../data/eclipses/`-hakemistosta
+samalla tempulla. **Huom:** aiempi ohje `cd web && python3 -m http.server` ei
+enää riitä — se ei näe `../data/`-hakemistoa, joten muut kuin oletuspimennys
+jäävät lataamatta. Palvele juuresta tai avaa tiedostona.
 
 Näppäimet: väli = play/pause, nuoli vasen/oikea = askel minuutti kerrallaan.
 Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
@@ -30,14 +40,14 @@ Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 .venv/bin/python check_oracle.py     # 7 vertailua julkaistuun ennusteeseen
 
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
-.venv/bin/python check.py            # 32 tarkistusta oikeassa selaimessa
+.venv/bin/python check.py            # 45 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
 ```
 
 ## Mitä tehty
 
 **`gen_data.py`** — laskee pimennyksen alusta asti, ainoa ulkoinen syöte on
-JPL DE421 -efemeridi. Kriteeri on suunnitelman mukainen: piste on umbrassa kun
+JPL DE440s -efemeridi (DE421 kattoi vain ~1900–2050, DE440s koko 1986–2066). Kriteeri on suunnitelman mukainen: piste on umbrassa kun
 `erotuskulma(Aurinko, Kuu) + Auringon kulmasäde < Kuun kulmasäde`, ja lisäksi
 Auringon on oltava horisontin yläpuolella (ilman tätä ehto täyttyy myös Maan
 yöpuolella). Kokonaisaika **8,9 s**:
@@ -71,7 +81,7 @@ vastaan, ja reuna on kohta jossa kesto menee nollaan (kestokäyrät vastaavasti
 1/2/4/6 minuutin kohdalta).
 
 **`web/`** — Leaflet CDN:stä, Esri World Imagery -tiilet, ei buildia eikä
-npm:ää. Kolme käsin kirjoitettua tiedostoa + generoitu datatiedosto.
+npm:ää. Kolme käsin kirjoitettua tiedostoa + generoidut datatiedostot.
 
 ### TASK 2 — kartan klikkaus (valmis)
 
@@ -215,6 +225,76 @@ ulkopuolisen näytteen päälle. Nyt reuna ekstrapoloidaan kahdesta viimeisestä
 Kuun säteen valinta. Vyöhyke oli aiemmin ~2,7 % liian leveä; paikkakuntien
 kestot eivät muuttuneet (ne eivät riipu rajaviivoista).
 
+### TASK 6 — kaikki täydelliset pimennykset 1986–2066 (valmis)
+
+**59 pimennystä**, joissa on täydellinen vaihe: 53 täydellistä ja 6 hybridiä.
+Data yhteensä **10,5 MB**, ladataan vasta kun pimennys valitaan.
+
+Luettelo johdetaan efemeridistä, ei verkosta. `find_eclipses.py` etsii ensin
+uudetkuut (81 vuotta, 6 h ruudukko, geometriset paikat riittävät ja ovat
+kymmenen kertaa halvempia kuin valonkulkukorjatut) ja tutkii sitten ne 572,
+joissa erotuskulma on alle 4°. Ratkaiseva oivallus: **testi tehdään varjon
+akselilla, ei ruudukolla.** Akseli on Auringon keskipisteestä Kuun keskipisteen
+kautta kulkeva suora; siinä kohtaa missä se osuu ellipsoidiin, varjo on syvin,
+joten yksi piste ratkaisee koko kysymyksen:
+
+    täydellinen  kun  r_kuu − r_aurinko − erotus > 0
+    rengasmainen kun  r_aurinko − r_kuu − erotus > 0
+
+Molempia näyttävä on hybridi. Ruudukko, joka on tarpeeksi karkea pyyhkäisemään
+80 vuotta, astuisi suoraan muutaman kilometrin levyisen umbran yli — juuri niitä
+hybridejä ei löytyisi. Koko haku kestää **19 s**.
+
+Validointi TASK6:n antamia tunnettuja faktoja vastaan (`check.py` 8a–8g):
+
+| tarkistus | tulos |
+|---|---|
+| lukumäärä 55–65 | 59 ✓ |
+| 7 nimettyä pimennystä, päivämäärät tarkalleen | kaikki löytyivät ✓ |
+| 2009-07-22 on 2000-luvun pisin, ~6m39s | 402 s (+3 s) ✓ |
+| 2017-08-21 ~2m40s (Hopkinsville KY) | 162,5 s (+2,3 s) ✓ |
+| 2024-04-08 ~4m28s (Torreón) | 270,1 s (+2,0 s) ✓ |
+| kaikilla luettelon pimennyksillä on datatiedosto | 59/59 ✓ |
+
+Erot ovat sitä samaa +2 s:n Kuun sädekonventiota jonka TASK 5 mittasi.
+Huomaa että 1991-07-11 (6m57s) on listan pisin, mutta se on 1900-lukua;
+"vuosisadan pisin" tarkoittaa 2000-lukua, ja testi rajaa sen niin.
+
+**Rajatapaukset:**
+
+- **Päivämääräraja.** 15 polkua ylittää ±180°. Ne eivät ole katkaistu saumasta
+  vaan pituusasteet kirjoitetaan **jatkuvina** (…179, 181, …), jolloin Leaflet
+  piirtää ne suoraan seuraavaan maailmankopioon ja vyöhyke, keskilinja ja
+  jokainen umbran ääriviiva pysyvät yhtenä kappaleena. Katkaisu jättäisi
+  näkyvän raon juuri sinne missä varjo on kiinnostavin. `worldCopyJump` on
+  siksi pois päältä: kartan keskipisteen kiertäminen veisi geometrian
+  maailmanleveyden päähän näkyvästä kopiosta. Klikkaustesti siirtää
+  klikatun pituusasteen kunkin ruudun omalle kierrokselle ennen vertailua.
+- **Napa-alueet.** 12 polkua yltää yli 70° leveydelle, 2015-03-20 aina
+  88,9°N asti. Mercator ei piirrä yli ~85°, joten aloitusnäkymän rajat
+  leikataan ±84°:een — muuten koko ruutu menisi tyhjään tilaan.
+- **Hybridit joiden täydellinen vaihe on lyhyt.** Neljä hybridiä
+  (1986-10-03, 1987-03-29, 2005-04-08, 2049-11-25) epäonnistui ensimmäisellä
+  ajolla: globaali 1°/300 s haku ei näe umbraa joka on pinnalla alle minuutin.
+  Nyt generaattori putoaa takaisin **akselihakuun** (`axis_scan`) kun ruudukko
+  ei löydä mitään, ja valitsee aika-askeleen niin että lyhyestäkin vaiheesta
+  tulee ≥24 ruutua. 1986-10-03 kestää keskilinjalla **2 sekuntia** ja on nyt
+  mukana 27 ruudulla — juuri se on hybridin kiinnostavin osa.
+- **Epäonnistuminen ei kaada ajoa**: virhe kirjataan, pimennys ohitetaan ja
+  se poistetaan luettelosta, jottei sivu tarjoa dataa jota ei ole.
+
+Käyttöliittymä: pudotusvalikko vasemmassa ylänurkassa, rivit muotoa
+`2027-08-02 · total · 6m25s · Morocco - Europe - Egypt - Indian Ocean`.
+Valinta lataa datan `<script>`-injektiolla, purkaa vanhat tasot, rakentaa uudet
+ja lentää polulle. Paikkamerkit ovat 2027-kohtaisia ja näkyvät vain sille.
+Aluetunnisteet johdetaan karkeista laatikoista polun koordinaateista — ne ovat
+tarkoituksella likimääräisiä, ihmisen vihje eikä maantieteellinen väite.
+
+Refaktorointi: yhden pimennyksen putki on nyt funktio `generate(date, …)`,
+ja `eclipse_core.py` sai jaetut akseligeometriat. Molemmat tarkistettiin
+ajamalla 2027 uudelleen — JSON oli tavulleen identtinen (paitsi `source`,
+joka nyt kertoo DE440s:n, kuten pitääkin).
+
 ## Validointi
 
 | | laskettu | suunnitelman odotus |
@@ -266,15 +346,19 @@ Kestokäyrät kartalla näyttävät tämän suoraan.
 ## Tiedostot
 
 ```
-eclipse_core.py        jaettu fysiikka (umbrakriteeri, SkyTable, olosuhteet)
+eclipse_core.py        jaettu fysiikka (umbrakriteeri, SkyTable, varjon akseli)
+find_eclipses.py       pimennysten haku efemeridistä 1986–2066
 gen_data.py            datageneraattori (numpy + skyfield)
 check.py               hyväksymistestit selaimessa (playwright)
 check_oracle.py        vertailu NASA/GSFC:n julkaistuun ennusteeseen
-data/eclipse2027.json  data suunnitelman muodossa
+data/index.json        luettelo: 59 pimennystä
+data/eclipses/*.js     yksi tiedosto per pimennys (10,5 MB yhteensä)
+data/eclipse2027.json  oletuspimennys suunnitelman muodossa
 web/index.html         sivu
 web/app.js             kartta, animaatio, kontrollit
 web/style.css          tumma ulkoasu
-web/eclipse2027.js     sama data window.ECLIPSE_DATA:na (file://-tuki)
+web/eclipse2027.js     oletusdata window.ECLIPSE_DATA:na (file://-tuki)
+web/eclipse-index.js   luettelo window.ECLIPSE_INDEX:nä
 shots/                 kuvakaappaukset testiajosta
-de421.bsp              skyfieldin lataama efemeridi (ei versionhallintaan)
+de440s.bsp             skyfieldin lataama efemeridi (ei versionhallintaan)
 ```
