@@ -22,12 +22,13 @@ Molemmat toimivat. `web/index.html` lataa datan `web/eclipse2027.js`:stä
 `gen_data.py` kirjoittaa saman sisällön myös muodossa `data/eclipse2027.json`.
 
 Näppäimet: väli = play/pause, nuoli vasen/oikea = askel minuutti kerrallaan.
+Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 
 ### Testit
 
 ```bash
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
-.venv/bin/python check.py            # 15 tarkistusta oikeassa selaimessa
+.venv/bin/python check.py            # 24 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
 ```
 
@@ -69,6 +70,39 @@ vastaan, ja reuna on kohta jossa kesto menee nollaan (kestokäyrät vastaavasti
 
 **`web/`** — Leaflet CDN:stä, Esri World Imagery -tiilet, ei buildia eikä
 npm:ää. Kolme käsin kirjoitettua tiedostoa + generoitu datatiedosto.
+
+### TASK 2 — kartan klikkaus (valmis)
+
+Klikkaus mihin tahansa kartalla: animaatio pysäytetään, kello ja slideri
+siirtyvät hetkeen jolloin umbran keskipiste on lähimpänä klikattua pistettä,
+ja umbra piirretään sen mukaisesti. Play jatkaa uudesta ajasta, nuolinäppäimet
+askeltavat edelleen minuutin, väli toggloi.
+
+Aika ei nappaa lähimpään ruutuun vaan klikkaus **projisoidaan keskilinjan
+jokaiselle 60 s jaksolle** ja lähin projektio voittaa, joten tulos on jatkuva.
+
+Jos piste on totaliteettivyöhykkeen sisällä, klikkauskohtaan tulee pieni popup:
+kesto, maksimin UTC-aika ja totaliteetin alku/loppu. **Uutta dataa ei tarvittu**
+— kesto luetaan suoraan umbran ääriviivoista: piste on varjossa niiden kahden
+hetken välillä, joina liikkuva ääriviiva ylittää sen, ja ylitykset haetaan
+puolitushaulla samasta interpoloidusta ääriviivasta jonka animaatio piirtää.
+Tämä ristiinvalidoitiin `gen_data.py`:n riippumattomasti laskemia arvoja
+vastaan: **ero enintään ~2 s** (Malaga 114,3 s vs 115,4 s; Luxor 383,4 s vs
+382,8 s; keskilinjan otokset koko polulta ≤ 2,1 s). Jäännösvirhe tulee 60 s
+näytteenoton lineaarisesta interpoloinnista ja on selvästi pienempi kuin
+laskennan oma ~2 s systemaattinen ero julkaistuihin ennusteisiin.
+
+Rajatapaukset:
+- **Polun ulkopuolella** ei näytetä popupia, vain kello siirtyy — ei arvailla.
+- Jos piste on jo ensimmäisessä tai viimeisessä ruudussa, totaliteetti on
+  alkanut ennen laskettua ikkunaa tai päättyy sen jälkeen. Silloin popup
+  näyttää **vain maksimiajan**, ei kestoa, koska luku olisi aliarvio.
+- **Markkerien klikkaukset** kuuluvat edelleen markkereille: Leaflet ei
+  välitä klikkausta kartalle kun interaktiivinen taso nappaa sen, ja kaikki
+  ratatasot (vyöhyke, käyrät, umbra, kestokäyrien tekstit) on piirretty
+  `interactive: false` -asetuksella, joten ne eivät syö klikkauksia.
+- **Raahaus ei laukaise klikkausta** (Leafletin oma `_draggableMoved`-tarkistus);
+  testattu oikealla hiiren vedolla.
 
 ## Validointi
 
@@ -112,8 +146,9 @@ Kestokäyrät kartalla näyttävät tämän suoraan.
   reunalla). Tämä on odotettu ero, ei virhe.
 - Kartalla ei ole osittaisen pimennyksen prosenttikäyriä (95 %, 99 % kuten
   referenssikuvissa) — ne eivät olleet vaatimuksissa.
-- Popupit vain kahdelle merkitylle paikalle. Mielivaltaisen klikatun pisteen
-  olosuhteet vaatisivat joko laskennan selaimessa tai tiheämmän datahilan.
+- Klikkauspopup näyttää totaliteetin, ei osittaisen pimennyksen prosenttia
+  eikä kontaktiaikoja C1/C4 — ne vaatisivat penumbran, jota ei lasketa.
+  Merkityille paikoille (Malaga, Luxor) nämä ovat popupissa.
 
 ## Tiedostot
 

@@ -55,6 +55,23 @@
     return Math.floor(sec / 60) + ' min ' + pad(sec % 60) + ' s';
   }
 
+  function wrapLon(lon) { return ((lon + 540) % 360) - 180; }
+
+  // Ray casting in (lon, lat). The path never crosses the antimeridian, so
+  // plain coordinates are safe here.
+  function pointInRing(lat, lon, ring) {
+    var inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var yi = ring[i][0], xi = ring[i][1];
+      var yj = ring[j][0], xj = ring[j][1];
+      if ((yi > lat) !== (yj > lat) &&
+          lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
   // -- main ----------------------------------------------------------------
 
   function start(data) {
@@ -200,23 +217,27 @@
     var playing = false;
     var last = 0;
 
-    function setTime(t, fromSlider) {
-      now = Math.min(t1, Math.max(t0, t));
-      var x = (now - t0) / stepS;
+    // Vertices are stored at the same fixed bearings in every frame, so a
+    // straight vertex-by-vertex blend keeps the outline well behaved.
+    function shapeAt(t) {
+      var x = (Math.min(t1, Math.max(t0, t)) - t0) / stepS;
       var i = Math.min(frames.length - 2, Math.max(0, Math.floor(x)));
       var f = Math.min(1, Math.max(0, x - i));
       var a = frames[i], b = frames[i + 1];
-
-      // Vertices are stored at the same fixed bearings in every frame, so a
-      // straight vertex-by-vertex blend keeps the outline well behaved.
       var ring = new Array(a.poly.length);
       for (var k = 0; k < a.poly.length; k++) {
         ring[k] = [a.poly[k][0] + (b.poly[k][0] - a.poly[k][0]) * f,
                    a.poly[k][1] + (b.poly[k][1] - a.poly[k][1]) * f];
       }
-      umbra.setLatLngs([ring]);
-      umbraDot.setLatLng([a.c[0] + (b.c[0] - a.c[0]) * f,
-                          a.c[1] + (b.c[1] - a.c[1]) * f]);
+      return { ring: ring, centre: [a.c[0] + (b.c[0] - a.c[0]) * f,
+                                    a.c[1] + (b.c[1] - a.c[1]) * f] };
+    }
+
+    function setTime(t, fromSlider) {
+      now = Math.min(t1, Math.max(t0, t));
+      var s = shapeAt(now);
+      umbra.setLatLngs([s.ring]);
+      umbraDot.setLatLng(s.centre);
 
       elTime.textContent = hms(now);
       if (!fromSlider) elSlider.value = now;
@@ -261,6 +282,92 @@
       setTime(parseFloat(elSlider.value), true);
     };
 
+    // -- click anywhere to jump to that moment -----------------------------
+
+    // Time at which the umbra centre passes closest to (lat, lon): the click is
+    // projected onto every leg of the centre track and the nearest projection
+    // wins, so the answer moves smoothly rather than snapping to whole frames.
+    function closestApproach(lat, lon) {
+      var kx = Math.cos(lat * Math.PI / 180);
+      var bestD2 = Infinity, bestT = t0;
+      for (var i = 0; i < frames.length - 1; i++) {
+        var a = frames[i].c, b = frames[i + 1].c;
+        var bx = wrapLon(b[1] - a[1]) * kx, by = b[0] - a[0];
+        var px = wrapLon(lon - a[1]) * kx, py = lat - a[0];
+        var len2 = bx * bx + by * by;
+        var u = len2 > 0 ? Math.max(0, Math.min(1, (px * bx + py * by) / len2)) : 0;
+        var dx = px - u * bx, dy = py - u * by;
+        var d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; bestT = frames[i].s + u * stepS; }
+      }
+      return bestT;
+    }
+
+    // Totality at an arbitrary point, read straight off the umbra outlines: the
+    // point is inside the shadow between the two times the moving outline
+    // crosses it. The crossings are bisected on the interpolated outline, which
+    // is the same geometry the animation draws.
+    function totalityAt(lat, lon) {
+      var first = -1, last = -1;
+      for (var i = 0; i < frames.length; i++) {
+        if (pointInRing(lat, lon, frames[i].poly)) {
+          if (first < 0) first = i;
+          last = i;
+        }
+      }
+      if (first < 0) return null;
+
+      function crossing(tIn, tOut) {
+        if (tIn === tOut) return tIn;
+        for (var k = 0; k < 16; k++) {
+          var m = (tIn + tOut) / 2;
+          if (pointInRing(lat, lon, shapeAt(m).ring)) tIn = m; else tOut = m;
+        }
+        return (tIn + tOut) / 2;
+      }
+
+      var t_in = crossing(frames[first].s, frames[first === 0 ? 0 : first - 1].s);
+      var t_out = crossing(frames[last].s,
+                           frames[last === frames.length - 1 ? last : last + 1].s);
+      // Truncated by the ends of the computed path rather than by the shadow.
+      var clipped = (first === 0) || (last === frames.length - 1);
+      return { start: t_in, end: t_out, duration: t_out - t_in,
+               max: (t_in + t_out) / 2, clipped: clipped };
+    }
+
+    var clickPopup = L.popup({ maxWidth: 250, className: 'click-popup',
+                               autoPan: false });
+
+    map.on('click', function (e) {
+      var lat = e.latlng.lat;
+      var lon = wrapLon(e.latlng.lng);
+
+      setPlaying(false);
+      setTime(closestApproach(lat, lon));
+
+      var tot = totalityAt(lat, lon);
+      if (!tot) { map.closePopup(clickPopup); return; }
+
+      var html = '';
+      if (tot.clipped) {
+        // The shadow reaches this point outside the computed window, so the
+        // duration would be an undercount. Show only what is certain.
+        html = '<div class="big">totaliteetti</div>';
+      } else {
+        html = '<div class="big">' + mmss(tot.duration) + '</div>';
+      }
+      html += '<table><tr><td>Maksimi</td><td>' + hms(tot.max) + ' UTC</td></tr>';
+      if (!tot.clipped) {
+        html += '<tr><td>Kesto</td><td>' + hms(tot.start) + ' &ndash; ' +
+                hms(tot.end) + '</td></tr>';
+      }
+      html += '</table><p class="foot">' + Math.abs(lat).toFixed(3) + '°' +
+              (lat < 0 ? 'S' : 'N') + ', ' + Math.abs(lon).toFixed(3) + '°' +
+              (lon < 0 ? 'W' : 'E') + '</p>';
+
+      clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
+    });
+
     document.addEventListener('keydown', function (e) {
       if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
       if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
@@ -273,7 +380,9 @@
 
     // Small handle for scripted checks and for poking at the map from a console.
     window.eclipse = { map: map, data: data, setTime: setTime, setPlaying: setPlaying,
-                       markers: siteMarkers };
+                       markers: siteMarkers, isPlaying: function () { return playing; },
+                       time: function () { return now; },
+                       closestApproach: closestApproach, totalityAt: totalityAt };
   }
 
   // -- popup ---------------------------------------------------------------

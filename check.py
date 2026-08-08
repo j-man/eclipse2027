@@ -22,6 +22,8 @@ SHOTS = {
     "malaga-popup": ("eclipse.map.setView([36.55,-4.42],9); eclipse.setTime(31745);"
                      "eclipse.markers.Malaga.openPopup();"),
     "luxor": "eclipse.map.setView([25.7,32.6],7); eclipse.setTime(36300);",
+    "click-popup": ("eclipse.map.setView([26.75,31.15],7);"
+                    "eclipse.map.fire('click',{latlng:L.latLng(26.55,31.45)});"),
     "west-end": "eclipse.map.setView([31,-40],5); eclipse.setTime(30320);",
     "east-end": "eclipse.map.setView([-10,84],5); eclipse.setTime(42400);",
 }
@@ -150,6 +152,114 @@ def main():
         check("4b. Malaga is covered by the umbra at mid-totality",
               page.evaluate(IN_POLY, [mal["lat"], mal["lon"], "umbra"]),
               f"{mal['duration']:.0f} s of totality")
+
+        # 6. click-to-time
+        def click_at(lat, lon):
+            page.evaluate("eclipse.map.closePopup()")
+            xy = page.evaluate(
+                "([a,b]) => { const p = eclipse.map.latLngToContainerPoint(L.latLng(a,b));"
+                "return [p.x, p.y]; }", [lat, lon])
+            page.mouse.click(xy[0], xy[1])
+            page.wait_for_timeout(400)
+            return xy
+
+        def nearest_centre_time(lat, lon):
+            """Closest centre-line sample, as a plain independent reference."""
+            import math
+            best, bt = 1e9, None
+            for p in centre:
+                dy = p[0] - lat
+                dx = (p[1] - lon) * math.cos(math.radians(lat))
+                d = dy * dy + dx * dx
+                if d < best:
+                    best, bt = d, p[2]
+            return bt
+
+        def clock_seconds():
+            h, m, s = (int(x) for x in page.text_content("#clock-time").split(":"))
+            return h * 3600 + m * 60 + s
+
+        # A centre-line point over the Egyptian desert, ~200 km clear of any
+        # site marker so the click reaches the map rather than a marker.
+        TP = (26.90, 30.98)
+        page.evaluate("eclipse.map.setView([%f,%f],6)" % TP)
+        page.wait_for_timeout(800)
+        page.evaluate("eclipse.setPlaying(true)")
+        click_at(*TP)
+        want = nearest_centre_time(*TP)
+        want_s = sum(int(v) * f for v, f in zip(want.split(":"), (3600, 60, 1)))
+        got_s = clock_seconds()
+        check("6a. click sets the clock to the umbra's closest approach",
+              abs(got_s - want_s) <= 180,
+              f"clock {page.text_content('#clock-time')}, nearest sample {want}")
+        check("6b. click pauses playback", not page.evaluate("eclipse.isPlaying()"))
+
+        popup = page.query_selector(".click-popup")
+        txt = popup.inner_text() if popup else ""
+        check("6c. popup inside the path shows duration and time of maximum",
+              popup is not None and "min" in txt and "UTC" in txt,
+              txt.replace("\n", " | ")[:70])
+
+        # The umbra sweep must agree with the durations computed independently
+        # by gen_data.py for the marked sites.
+        worst = max(
+            (abs(page.evaluate("([a,b]) => eclipse.totalityAt(a,b)",
+                               [m["lat"], m["lon"]])["duration"] - m["duration"]), m["name"])
+            for m in data["markers"] if "duration" in m)
+        check("6d. clicked duration matches the computed value",
+              worst[0] < 5, f"worst {worst[0]:.1f} s ({worst[1]})")
+
+        # Cairo is well north of the path: time only, no popup.
+        page.evaluate("eclipse.map.setView([28,31],5)")
+        page.wait_for_timeout(800)
+        before = clock_seconds()
+        click_at(30.04, 31.24)
+        check("6e. click outside the path sets time but shows no popup",
+              page.query_selector(".click-popup") is None and clock_seconds() != before,
+              "clock " + page.text_content("#clock-time"))
+
+        # Dragging the map must not be treated as a click.
+        page.evaluate("eclipse.map.closePopup()")
+        held = clock_seconds()
+        page.mouse.move(700, 300)
+        page.mouse.down()
+        for x in range(700, 560, -35):
+            page.mouse.move(x, 300 + (700 - x) // 4)
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        check("6f. dragging the map does not jump the clock",
+              clock_seconds() == held, f"still {page.text_content('#clock-time')}")
+
+        # A click on a site marker still belongs to the marker, not to the map.
+        page.evaluate("eclipse.map.setView([25.7,32.6],7)")
+        page.wait_for_timeout(800)
+        page.evaluate("eclipse.map.closePopup()")
+        marker_t = clock_seconds()
+        click_at(25.6872, 32.6396)
+        opened = page.query_selector(".leaflet-popup-content")
+        check("6g. marker clicks keep their own popup",
+              opened is not None and "Luxor" in opened.inner_text()
+              and page.query_selector(".click-popup") is None
+              and clock_seconds() == marker_t,
+              (opened.inner_text().split("\n")[0] if opened else "no popup"))
+
+        # Existing controls still behave.
+        page.evaluate("eclipse.map.setView([%f,%f],6)" % TP)
+        page.wait_for_timeout(600)
+        click_at(*TP)
+        t_click = clock_seconds()
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(250)
+        check("6h. arrow key still steps one minute",
+              clock_seconds() - t_click == 60,
+              f"{t_click} -> {clock_seconds()}")
+        page.keyboard.press("Space")
+        page.wait_for_timeout(900)
+        resumed = clock_seconds()
+        page.evaluate("eclipse.setPlaying(false)")
+        check("6i. play resumes from the clicked time",
+              page.evaluate("eclipse.isPlaying") is not None and resumed > t_click,
+              f"resumed at {resumed - t_click:+d} s from the click")
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

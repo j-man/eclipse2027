@@ -62,6 +62,13 @@ html, body {
   font-size: 12px;
   color: var(--ink-dim);
 }
+#title p.hint {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 11px;
+  color: #767d90;
+}
 
 /* Bottom control bar ------------------------------------------------------- */
 
@@ -245,6 +252,9 @@ body.playing #play .ico-pause { display: block; }
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
+.click-popup .leaflet-popup-content { margin: 10px 13px; }
+.click-popup .leaflet-popup-content .big { font-size: 16px; margin-bottom: 7px; }
+
 .leaflet-popup-content .foot {
   margin: 9px 0 0;
   color: var(--ink-dim);
