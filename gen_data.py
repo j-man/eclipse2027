@@ -64,21 +64,24 @@ N_OFFSET = 121               # cross-track samples per centre-line point
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# name, lat, lon, utc offset (hours) on eclipse day, tz label.
-# Spain, Gibraltar and Ceuta keep CEST (UTC+2) in August; Tunisia stays on
-# CET (UTC+1) all year; Egypt reinstated summer time in 2023, so 2 August 2027
-# falls inside EEST (UTC+3) under the rules in force today.
-# These are specific to the 2027 eclipse and are only attached to that one.
+# name, lat, lon, IANA time zone.
+#
+# The zone name is all that is stored: the page asks the browser's own tz
+# database what offset that zone is on at the eclipse's instant, which gets
+# summer time right without anything here having to know about it. Storing a
+# number instead would be a second place for the rules to go stale — Egypt
+# reinstated summer time in 2023, and Kazakhstan merged its two zones in 2024.
+# These sites are specific to the 2027 eclipse and are attached to it alone.
 MARKERS_2027 = [
-    ("Sevilla", 37.3891, -5.9845, 2.0, "CEST"),
-    ("Malaga", 36.7213, -4.4214, 2.0, "CEST"),
-    ("Cadiz", 36.5271, -6.2886, 2.0, "CEST"),
-    ("Gibraltar", 36.1408, -5.3536, 2.0, "CEST"),
-    ("Tarifa", 36.0143, -5.6044, 2.0, "CEST"),
-    ("Ceuta", 35.8894, -5.3213, 2.0, "CEST"),
-    ("Sfax", 34.7406, 10.7603, 1.0, "CET"),
-    ("Luxor", 25.6872, 32.6396, 3.0, "EEST"),
-    ("Wadi Lahmy Azur Resort", 24.2369, 35.4118, 3.0, "EEST"),
+    ("Sevilla", 37.3891, -5.9845, "Europe/Madrid"),
+    ("Malaga", 36.7213, -4.4214, "Europe/Madrid"),
+    ("Cadiz", 36.5271, -6.2886, "Europe/Madrid"),
+    ("Gibraltar", 36.1408, -5.3536, "Europe/Gibraltar"),
+    ("Tarifa", 36.0143, -5.6044, "Europe/Madrid"),
+    ("Ceuta", 35.8894, -5.3213, "Africa/Ceuta"),
+    ("Sfax", 34.7406, 10.7603, "Africa/Tunis"),
+    ("Luxor", 25.6872, 32.6396, "Africa/Cairo"),
+    ("Wadi Lahmy Azur Resort", 24.2369, 35.4118, "Africa/Cairo"),
 ]
 
 t_start_wall = _time.time()
@@ -493,12 +496,13 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
         marker_sky = SkyTable(t_midnight,
                               np.arange(frames[0]["s"] - 7200.0,
                                         frames[-1]["s"] + 7200.0 + 1e-9, 2.0))
-        for name, lat, lon, tzoff, tzname in markers:
+        for name, lat, lon, tzone in markers:
             c = local_circumstances(marker_sky, lat, lon)
             if "duration" not in c:
                 c["dist_to_path_km"] = round(dist_to_path_km(limit_n, limit_s,
                                                              lat, lon), 1)
-            c.update(name=name, tz_offset_h=tzoff, tz_name=tzname)
+            # Times stay UTC seconds from midnight; `tz` is presentation only.
+            c.update(name=name, tz=tzone)
             site_data.append(c)
             if "duration" in c:
                 dd = int(round(c["duration"]))

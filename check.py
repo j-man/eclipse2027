@@ -8,6 +8,7 @@ Needs playwright:  pip install playwright && playwright install chromium
 """
 
 import json
+import math
 import re
 import os
 import sys
@@ -41,6 +42,21 @@ results = []
 def check(name, ok, detail=""):
     results.append((bool(ok), name, detail))
     print(("  PASS  " if ok else "  FAIL  ") + name + ("  " + detail if detail else ""))
+
+
+def hms(sec):
+    """Seconds of day as the page prints them: round half up, then wrap a day.
+
+    Half-up rather than Python's half-even, because the number being reproduced
+    is the one JavaScript's Math.round produced.
+    """
+    s = int(math.floor(sec + 0.5)) % 86400
+    return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
+
+
+def secs(txt):
+    h, m, s = (int(x) for x in txt.split(":"))
+    return h * 3600 + m * 60 + s
 
 
 # Screen-space point-in-polygon against whichever overlay we ask for.
@@ -163,9 +179,16 @@ def main():
                               "el => { el.value = %f; el.dispatchEvent(new Event('input')); }"
                               % (data["umbra"][-1]["s"] - 600))
         page.wait_for_timeout(300)
+        # The big reading follows the place last clicked, so the timeline is
+        # read off #clock-utc, which is UTC whatever place is selected.
         check("3c. slider scrubs the timeline",
-              page.text_content("#clock-time") == data["umbra"][-11]["t"],
-              "clock reads " + page.text_content("#clock-time"))
+              page.text_content("#clock-utc") == data["umbra"][-11]["t"],
+              "clock reads " + page.text_content("#clock-utc"))
+        check("3d. with no place picked the clock is plain UTC",
+              page.text_content("#clock-time") == data["umbra"][-11]["t"]
+              and page.text_content("#clock-zone") == "UTC",
+              page.text_content("#clock-time") + " "
+              + page.text_content("#clock-zone"))
 
         # 4. Malaga is inside the band, and inside the umbra at mid-totality
         mal = next(m for m in data["markers"] if m["name"] == "Malaga")
@@ -229,7 +252,6 @@ def main():
 
         def nearest_centre_time(lat, lon):
             """Closest centre-line sample, as a plain independent reference."""
-            import math
             best, bt = 1e9, None
             for p in centre:
                 dy = p[0] - lat
@@ -240,7 +262,8 @@ def main():
             return bt
 
         def clock_seconds():
-            h, m, s = (int(x) for x in page.text_content("#clock-time").split(":"))
+            """The clock's UTC reading, whichever place's zone is on show."""
+            h, m, s = (int(x) for x in page.text_content("#clock-utc").split(":"))
             return h * 3600 + m * 60 + s
 
         # A centre-line point over the Egyptian desert, ~200 km clear of any
@@ -578,6 +601,146 @@ def main():
         fresh.close()
         check("9k. chevron nudges on a first visit only",
               first and not again, f"first visit {first}, second {again}")
+
+        # 10. local wall-clock time of the place, not of the viewer's browser
+        #
+        # No offset is ever stored. The page carries an IANA zone name and asks
+        # the browser's own tz database what that zone is on at the eclipse's
+        # instant, so summer time follows the eclipse's date and not today's.
+        page.evaluate("eclipse.select('2027-08-02')")
+        page.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                               timeout=15000)
+        page.wait_for_timeout(900)
+
+        WANT_TZ = {"Sevilla": "Europe/Madrid", "Malaga": "Europe/Madrid",
+                   "Cadiz": "Europe/Madrid", "Gibraltar": "Europe/Gibraltar",
+                   "Tarifa": "Europe/Madrid", "Ceuta": "Africa/Ceuta",
+                   "Sfax": "Africa/Tunis", "Luxor": "Africa/Cairo",
+                   "Wadi Lahmy Azur Resort": "Africa/Cairo"}
+        got_tz = {m["name"]: m.get("tz") for m in data["markers"]}
+        check("10a. every marked site carries an explicit IANA zone",
+              got_tz == WANT_TZ,
+              ", ".join(f"{n}={v}" for n, v in got_tz.items() if WANT_TZ.get(n) != v)
+              or f"{len(got_tz)} sites")
+        stale = [m["name"] for m in data["markers"]
+                 if "tz_offset_h" in m or "tz_name" in m]
+        check("10b. no fixed offset survives in the stored data",
+              not stale, "; ".join(stale) or "zone names only, times still UTC")
+
+        tarifa = next(m for m in data["markers"] if m["name"] == "Tarifa")
+        st = page.evaluate("([z, s]) => eclipse.stampFor(z, s)",
+                           ["Europe/Madrid", tarifa["total_start"]])
+        check("10c. Tarifa reads as CEST, exactly UTC+2 on 2027-08-02",
+              st["exact"] and st["offset"] == 7200 and st["label"] == "UTC+2"
+              and st["abbr"] == "CEST" and st["dayShift"] == 0
+              and hms(st["localSec"]) == hms(tarifa["total_start"] + 7200),
+              f"totality from {hms(st['localSec'])} {st['label']} "
+              f"({st['abbr']}) = {hms(tarifa['total_start'])} UTC")
+
+        # TASK10 expects UTC+2 at Luxor on the grounds that Egypt keeps no
+        # summer time. It has kept it again since 2023, and the tz database puts
+        # 2027-08-02 inside EEST, so the DST-correct answer is UTC+3; asserting
+        # +2 would be pinning a rule that has already changed. What the page
+        # must never do is disagree with the database it is reading, so that is
+        # the check, with today's answer pinned next to it.
+        luxor = next(m for m in data["markers"] if m["name"] == "Luxor")
+        st = page.evaluate("([z, s]) => eclipse.stampFor(z, s)",
+                           ["Africa/Cairo", luxor["max_s"]])
+        db = page.evaluate("""() => new Intl.DateTimeFormat('en-GB', {
+              timeZone: 'Africa/Cairo', timeZoneName: 'longOffset' })
+            .formatToParts(new Date(Date.UTC(2027, 7, 2, 10, 5, 19)))
+            .find(p => p.type === 'timeZoneName').value""")
+        check("10d. Luxor follows Africa/Cairo as the tz database has it",
+              st["exact"] and st["zone"] == "Africa/Cairo"
+              and st["offset"] == int(db[3:6]) * 3600 and st["offset"] == 10800,
+              f"{st['label']}, database says {db} — Egypt has had summer time "
+              f"again since 2023, so the eclipse date is EEST, not UTC+2")
+
+        # Iceland: same mechanism, a zone that happens to sit on UTC in August.
+        page.evaluate("eclipse.select('2026-08-12')")
+        page.wait_for_function("eclipse.data.meta.date === '2026-08-12'",
+                               timeout=15000)
+        page.wait_for_timeout(900)
+        st = page.evaluate("() => eclipse.stampAt(64.146, -21.94)")
+        check("10e. a point in Iceland resolves to Atlantic/Reykjavik, UTC+0",
+              st["zone"] == "Atlantic/Reykjavik" and st["exact"]
+              and st["offset"] == 0 and st["label"] == "UTC+0",
+              f"{st['zone']} {st['label']}")
+
+        page.evaluate("eclipse.map.setView([64.146,-21.94],7)")
+        page.wait_for_timeout(800)
+        click_at(64.146, -21.94)
+        check("10f. clicking there leaves local and UTC identical, both labelled",
+              page.text_content("#clock-zone") == "UTC+0"
+              and page.text_content("#clock-time") == page.text_content("#clock-utc"),
+              page.text_content("#clock-time") + " "
+              + page.text_content("#clock-zone") + " · "
+              + page.text_content("#clock-utc") + " UTC")
+
+        # Back to 2027, and a click on the Spanish coast clear of every marker.
+        page.evaluate("eclipse.select('2027-08-02')")
+        page.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                               timeout=15000)
+        page.wait_for_timeout(900)
+        page.evaluate("eclipse.map.setView([36.20,-5.85],8)")
+        page.wait_for_timeout(800)
+        click_at(36.20, -5.85)
+        loc, utc = (page.text_content("#clock-time"),
+                    page.text_content("#clock-utc"))
+        check("10g. a click in Spain puts the clock on CEST, UTC beside it",
+              page.text_content("#clock-zone") == "UTC+2"
+              and secs(loc) - secs(utc) == 7200,
+              f"{loc} (UTC+2) — {utc} UTC")
+        pop = page.query_selector(".click-popup")
+        txt = pop.inner_text() if pop else ""
+        check("10h. the popup gives local time first and UTC second",
+              re.search(r"\d\d:\d\d:\d\d \(UTC\+2\)\s+—\s+\d\d:\d\d:\d\d UTC", txt)
+              is not None and "Europe/Madrid" in txt,
+              txt.replace("\n", " | ")[:78])
+
+        # Off the coast of Africa there is no zone to name, so the offset comes
+        # from the longitude and must wear a tilde.
+        st = page.evaluate("() => eclipse.stampAt(31.0, -40.0)")
+        check("10i. mid-Atlantic falls back to a longitude estimate",
+              st["zone"] is None and not st["exact"]
+              and st["offset"] == -3 * 3600 and st["label"].startswith("~UTC"),
+              st["label"])
+        page.evaluate("eclipse.map.setView([31,-40],5)")
+        page.wait_for_timeout(800)
+        click_at(31.0, -40.0)
+        check("10j. an estimated offset is never presented as exact",
+              page.text_content("#clock-zone").startswith("~UTC")
+              and "arvioitu" in (page.get_attribute("#clock", "title") or ""),
+              page.text_content("#clock-zone") + " · "
+              + str(page.get_attribute("#clock", "title")))
+
+        popups = page.evaluate(
+            "Object.entries(eclipse.markers).map(([n,mk]) =>"
+            "  [n, mk.getPopup().getContent()])")
+        guessed = [n for n, html in popups if "~UTC" in html]
+        unnamed = [n for n, html in popups if WANT_TZ[n] not in html]
+        check("10k. marked sites never guess, and each names its zone",
+              not guessed and not unnamed,
+              "; ".join(guessed + unnamed) or f"{len(popups)} sites")
+
+        # Presentation only: the displayed UTC value is still exactly the
+        # number gen_data.py computed, and the local one is that plus an offset.
+        page.evaluate("eclipse.map.setView([25.7,32.6],7)")
+        page.wait_for_timeout(800)
+        before = clock_seconds()
+        page.evaluate("eclipse.markers.Luxor.openPopup()")
+        page.wait_for_timeout(400)
+        shown = page.query_selector(".leaflet-popup-content").inner_text()
+        want = (f"{hms(luxor['max_s'] + 10800)} (UTC+3) "
+                f"— {hms(luxor['max_s'])} UTC")
+        check("10l. displayed times are the stored UTC seconds, shifted to show",
+              want in " ".join(shown.split()), want)
+        check("10m. opening a site retunes the clock without moving the timeline",
+              page.text_content("#clock-zone") == "UTC+3"
+              and clock_seconds() == before
+              and "Africa/Cairo" in (page.get_attribute("#clock", "title") or ""),
+              page.text_content("#clock-time") + " UTC+3, timeline still at "
+              + page.text_content("#clock-utc"))
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

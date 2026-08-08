@@ -32,7 +32,8 @@
   </button>
     <div id="eclipse-menu" role="listbox" aria-label="Valitse pimennys" hidden></div>
   </div>
-  <p class="hint">Klikkaa karttaa: kello siirtyy siihen hetkeen</p>
+  <p class="hint">Klikkaa karttaa: kello siirtyy siihen hetkeen ja paikan
+    omaan aikavyöhykkeeseen</p>
 </div>
 
 <div id="bar">
@@ -47,9 +48,13 @@
     </button>
     <input id="slider" type="range" min="0" max="1000" value="0" step="1" aria-label="Aika">
   </div>
+  <!-- The big reading is the wall clock of the place last clicked; UTC stays
+       alongside it so the two are never confused. -->
   <div id="clock">
     <div id="clock-time">--:--:--</div>
-    <div id="clock-date">UTC</div>
+    <div id="clock-date"><span id="clock-zone">UTC</span> ·
+      <span id="clock-day"></span><span id="clock-utc-wrap"> ·
+      <span id="clock-utc">--:--:--</span> UTC</span></div>
   </div>
 </div>
 
@@ -59,6 +64,7 @@
      in on demand from ../data/eclipses/ when it is picked. -->
 <script src="eclipse-index.js"></script>
 <script src="eclipse-default.js"></script>
+<script src="tz.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

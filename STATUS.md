@@ -1,7 +1,7 @@
 # STATUS — Eclipse 2027 → kaikki täydelliset pimennykset 1986–2066
 
 Valmis ja testattu. PLAN.md:n neljä vaatimusta ja viisi hyväksymiskriteeriä
-täyttyvät, ja TASK 2–9 on toteutettu. 63 selaintarkistusta + 7 vertailua
+täyttyvät, ja TASK 2–10 on toteutettu. 77 selaintarkistusta + 7 vertailua
 julkaistuun ennusteeseen menevät läpi.
 
 ## Miten ajetaan
@@ -333,6 +333,17 @@ samassa aksenttisävyssä kuin valittu rivi, joten se ei luo uutta kategoriaa;
 joten se pysyy oikeana ensi vuonnakin. **Versionumero seuraa nyt
 tehtävänumeroa** (v9); se oli karannut kaksi jäljessä, koska TASK 5 oli
 pelkkä validointilisä joka ei koskenut sivuun.
+
+### TASK 10 — paikallinen aika UTC:n rinnalle (valmis)
+
+Kellonajat näytetään nyt klikatun paikan omassa vyöhykkeessä ja UTC perässä
+(`11:07:41 (UTC+2) — 09:07:41 UTC`); merkit kantavat IANA-nimen datassa ja
+klikkaus hakee sen `web/tz.js`:n laatikkotaulusta, minkä jälkeen selaimen oma
+tz-tietokanta antaa pimennyksen päivän oikean kesäaikasiirron. Laskenta ja
+tallennetut ajat pysyvät UTC:na. Sinne mihin taulu ei ulotu — meri ja osa
+sisämaan rajoista — jää pituuspiiriarvio, joka näytetään aina tildellä
+(`~UTC−3`). **Huom:** Luxor on UTC+3 eikä tehtävän olettama UTC+2, koska
+Egypti otti kesäajan takaisin 2023 (v10).
 
 ## Validointi
 

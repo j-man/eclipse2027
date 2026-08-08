@@ -403,7 +403,12 @@ body.playing #play .ico-pause { display: block; }
   font-weight: 600;
   letter-spacing: 1.1px;
   color: var(--ink-dim);
+  white-space: nowrap;
 }
+/* The offset is what disambiguates the big reading, so it is the one part of
+   the line that keeps full contrast. */
+#clock-zone { color: var(--ink); }
+#clock-utc-wrap { opacity: 0.7; font-variant-numeric: tabular-nums; }
 
 /* Map overlays ------------------------------------------------------------- */
 
@@ -479,6 +484,12 @@ body.playing #play .ico-pause { display: block; }
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
+/* Each half of a "local — UTC" pair holds together; a popup too narrow for
+   both breaks between them, never inside a time. */
+.leaflet-popup-content .loc { white-space: nowrap; }
+.leaflet-popup-content .utc { white-space: nowrap; opacity: 0.62; }
+.leaflet-popup-content .dshift { color: #ffd24a; }
+
 .click-popup .leaflet-popup-content { margin: 10px 13px; }
 .click-popup .leaflet-popup-content .big { font-size: 16px; margin-bottom: 7px; }
 

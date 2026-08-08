@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 9;
+  var VERSION = 10;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -51,11 +51,6 @@
            pad(Math.floor(sec / 60) % 60) + ':' + pad(sec % 60);
   }
 
-  function hm(sec) {
-    sec = Math.max(0, Math.round(sec));
-    return pad(Math.floor(sec / 3600) % 24) + ':' + pad(Math.floor(sec / 60) % 60);
-  }
-
   function mmss(sec) {
     sec = Math.round(sec);
     return Math.floor(sec / 60) + ' min ' + pad(sec % 60) + ' s';
@@ -73,6 +68,46 @@
   }
 
   function wrapLon(lon) { return ((lon + 540) % 360) - 180; }
+
+  // -- local time ----------------------------------------------------------
+  //
+  // Every time below comes out of tz.js as a "stamp": the wall clock at one
+  // place at one instant, with the offset that zone is really on that date.
+  // Nothing here converts anything; the numbers being printed are the same UTC
+  // seconds the rest of the file works in.
+
+  // A local date one day away from the UTC date is common enough east of
+  // Kiribati and west of Alaska that it has to be said out loud.
+  function dayTag(st) {
+    if (!st.dayShift) return '';
+    return ' <span class="dshift">' + (st.dayShift > 0 ? '+' : '−') +
+           Math.abs(st.dayShift) + ' pv</span>';
+  }
+
+  // "11:07:41 (UTC+2) — 09:07:41 UTC". Local first: that is the number a
+  // traveller sets an alarm by. UTC stays visible so the two can be reconciled.
+  function pairHtml(pl, sec) {
+    var st = TZ.stamp(pl, instant(sec));
+    return '<span class="loc">' + hms(st.localSec) + ' (' + st.label + ')' +
+           dayTag(st) + '</span><span class="utc"> &mdash; ' + hms(sec) +
+           ' UTC</span>';
+  }
+
+  function rangeHtml(pl, a, b) {
+    var sa = TZ.stamp(pl, instant(a)), sb = TZ.stamp(pl, instant(b));
+    return '<span class="loc">' + hms(sa.localSec) + ' &ndash; ' +
+           hms(sb.localSec) + ' (' + sa.label + ')' + dayTag(sa) +
+           '</span><span class="utc"> &mdash; ' + hms(a) + ' &ndash; ' +
+           hms(b) + ' UTC</span>';
+  }
+
+  // An offset from a named zone is a fact; one from longitude/15 is a guess and
+  // says so, here and in the tilde on the label itself.
+  function zoneFoot(st) {
+    return st.exact
+      ? 'paikallinen aika ' + st.zone + (st.abbr ? ' (' + st.abbr + ')' : '')
+      : 'paikallisaika arvioitu pituuspiiristä (' + st.label + ')';
+  }
 
   // Paths that cross the antimeridian are stored as continuous longitudes, so a
   // test point has to be moved onto the same turn before it can be compared.
@@ -104,6 +139,14 @@
   var now = 0, speedIdx = 2, playing = false, last = 0;
   var el = {};
   var catalog = [], rowFor = {}, menuOpen = false;
+
+  // Presentation only. Stored and computed times are UTC seconds from the
+  // eclipse date's midnight throughout; `dayMs` turns one into a real instant,
+  // which is what a time zone can be asked about, and `place` is the location
+  // whose wall clock the header currently shows (null = plain UTC).
+  var dayMs = 0, place = null;
+
+  function instant(sec) { return dayMs + Math.round(sec) * 1000; }
 
   // -- eclipse geometry ----------------------------------------------------
 
@@ -244,7 +287,12 @@
         }),
         title: m.name, riseOnHover: true
       }).bindTooltip(m.name, { direction: 'top', offset: [0, -7] })
-        .bindPopup(popupHtml(m), { maxWidth: 300 }));
+        // Wide enough that a local time and its UTC counterpart share one line.
+        .bindPopup(popupHtml(m), { maxWidth: 360 })
+        // Opening a site hands its zone to the header clock. The time itself is
+        // deliberately left alone: a marker click is a request to read, not to
+        // move the timeline.
+        .on('popupopen', function () { setPlace(TZ.named(m.tz, m.lon)); }));
     });
   }
 
@@ -257,12 +305,14 @@
     t0 = frames[0].s;
     t1 = frames[frames.length - 1].s;
     stepS = d.meta.step_s;
+    // Set before the popups are built: they need a real instant to ask the tz
+    // database about. A new eclipse starts with no place chosen.
+    dayMs = Date.parse(d.meta.date + 'T00:00:00Z');
+    place = null;
 
     clearEclipse();
     buildEclipse(d);
 
-    var dt = new Date(d.meta.date + 'T00:00:00Z');
-    el.clockDate.textContent = 'UTC · ' + dt.getUTCDate() + ' ' + MONTHS[dt.getUTCMonth()];
     el.cardTitle.textContent = fiDate(d.meta.date);
     var i = catalog.findIndex(function (e) { return e.date === d.meta.date; });
     var kind = i >= 0 ? (FI_TYPE[catalog[i].type] || catalog[i].type) : '';
@@ -416,9 +466,42 @@
     var s = shapeAt(now);
     umbra.setLatLngs([s.ring]);
     umbraDot.setLatLng(s.centre);
-    el.time.textContent = hms(now);
+    renderClock();
     if (!fromSlider) el.slider.value = now;
     el.slider.style.setProperty('--fill', ((now - t0) / (t1 - t0) * 100) + '%');
+  }
+
+  function dayLabel(ms) {
+    var d = new Date(ms);
+    return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()];
+  }
+
+  // With no place chosen the clock is plain UTC, as it was. Once the user picks
+  // a point or a site it reads that place's wall clock, and the UTC value moves
+  // into the line underneath rather than disappearing.
+  function renderClock() {
+    el.utc.textContent = hms(now);
+    if (!place) {
+      el.time.textContent = hms(now);
+      el.zone.textContent = 'UTC';
+      el.clockDay.textContent = dayLabel(instant(now));
+      el.utcWrap.hidden = true;
+      el.clock.title = 'Klikkaa karttaa: kello vaihtuu paikalliseen aikaan';
+      return;
+    }
+    var st = TZ.stamp(place, instant(now));
+    el.time.textContent = hms(st.localSec);
+    el.zone.textContent = st.label;
+    el.clockDay.textContent = dayLabel(st.localMs);
+    el.utcWrap.hidden = false;
+    el.clock.title = (st.exact
+      ? st.zone + (st.abbr ? ' (' + st.abbr + ')' : '')
+      : 'vyöhyke arvioitu pituuspiiristä') + ' · ' + hms(now) + ' UTC';
+  }
+
+  function setPlace(p) {
+    place = p;
+    renderClock();
   }
 
   function tick(ms) {
@@ -441,16 +524,15 @@
   // -- popups --------------------------------------------------------------
 
   function popupHtml(m) {
-    var off = (m.tz_offset_h || 0) * 3600;
-    var tz = m.tz_name || 'UTC';
+    // Marked sites carry their own IANA zone, so nothing is looked up here.
+    var pl = TZ.named(m.tz, m.lon);
     var rows = '';
 
-    // The zone is named once in the footer rather than on every row, which
-    // keeps each row on a single line.
+    // The zone is named once in the footer rather than on every row; each row
+    // carries the offset, which is the part that removes the ambiguity.
     function row(label, sec) {
       if (sec === undefined) return;
-      rows += '<tr><td>' + label + '</td><td>' + hms(sec) + ' UTC &nbsp;·&nbsp; ' +
-              hm(sec + off) + '</td></tr>';
+      rows += '<tr><td>' + label + '</td><td>' + pairHtml(pl, sec) + '</td></tr>';
     }
 
     var head, note = '';
@@ -477,7 +559,7 @@
            '<p class="foot">' + Math.abs(m.lat).toFixed(4) + '°' +
            (m.lat < 0 ? 'S' : 'N') + ', ' +
            Math.abs(m.lon).toFixed(4) + '°' + (m.lon < 0 ? 'W' : 'E') +
-           ' &nbsp;·&nbsp; paikallinen aika ' + tz + '</p>';
+           ' &nbsp;·&nbsp; ' + zoneFoot(TZ.stamp(pl, instant(m.max_s))) + '</p>';
   }
 
   // -- start up ------------------------------------------------------------
@@ -487,7 +569,11 @@
       el[id] = document.getElementById(id);
     });
     el.time = document.getElementById('clock-time');
-    el.clockDate = document.getElementById('clock-date');
+    el.clock = document.getElementById('clock');
+    el.zone = document.getElementById('clock-zone');
+    el.clockDay = document.getElementById('clock-day');
+    el.utc = document.getElementById('clock-utc');
+    el.utcWrap = document.getElementById('clock-utc-wrap');
     el.titleInfo = document.getElementById('title-info');
     el.card = document.getElementById('eclipse-card');
     el.menu = document.getElementById('eclipse-menu');
@@ -524,7 +610,7 @@
     map.createPane('umbra');
     map.getPane('umbra').style.zIndex = 450;
 
-    clickPopup = L.popup({ maxWidth: 250, className: 'click-popup', autoPan: false });
+    clickPopup = L.popup({ maxWidth: 330, className: 'click-popup', autoPan: false });
 
     buildMenu();
     el.card.onclick = function () { menuOpen ? closeMenu() : openMenu(); };
@@ -557,6 +643,10 @@
     map.on('click', function (e) {
       var lat = e.latlng.lat, lon = wrapLon(e.latlng.lng);
       setPlaying(false);
+      // The zone comes from the point on the ground, never from the browser:
+      // the viewer may be in Finland reading times for Egypt.
+      var pl = TZ.at(lat, lon);
+      setPlace(pl);
       setTime(closestApproach(lat, lon));
 
       var tot = totalityAt(lat, lon);
@@ -567,14 +657,16 @@
         // duration would be an undercount. Show only what is certain.
         ? '<div class="big">totaliteetti</div>'
         : '<div class="big">' + mmss(tot.duration) + '</div>';
-      html += '<table><tr><td>Maksimi</td><td>' + hms(tot.max) + ' UTC</td></tr>';
+      html += '<table><tr><td>Maksimi</td><td>' + pairHtml(pl, tot.max) +
+              '</td></tr>';
       if (!tot.clipped) {
-        html += '<tr><td>Kesto</td><td>' + hms(tot.start) + ' &ndash; ' +
-                hms(tot.end) + '</td></tr>';
+        html += '<tr><td>Kesto</td><td>' +
+                rangeHtml(pl, tot.start, tot.end) + '</td></tr>';
       }
       html += '</table><p class="foot">' + Math.abs(lat).toFixed(3) + '°' +
               (lat < 0 ? 'S' : 'N') + ', ' + Math.abs(lon).toFixed(3) + '°' +
-              (lon < 0 ? 'W' : 'E') + '</p>';
+              (lon < 0 ? 'W' : 'E') + ' &nbsp;·&nbsp; ' +
+              zoneFoot(TZ.stamp(pl, instant(tot.max))) + '</p>';
       clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
     });
 
@@ -607,7 +699,17 @@
       totalityAt: totalityAt, select: selectEclipse,
       index: window.ECLIPSE_INDEX || null, version: VERSION,
       openMenu: openMenu, closeMenu: closeMenu,
-      menuOpen: function () { return menuOpen; }, catalog: catalog
+      menuOpen: function () { return menuOpen; }, catalog: catalog,
+      // Local-time presentation, for scripted checks: the place whose clock is
+      // on screen, and the stamp any point on the map would produce.
+      place: function () { return place; },
+      stampAt: function (lat, lon, sec) {
+        return TZ.stamp(TZ.at(lat, wrapLon(lon)),
+                        instant(sec === undefined ? now : sec));
+      },
+      stampFor: function (zone, sec) {
+        return TZ.stamp(TZ.named(zone), instant(sec === undefined ? now : sec));
+      }
     };
 
     maybePulse();
