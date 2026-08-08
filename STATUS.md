@@ -27,6 +27,8 @@ Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 ### Testit
 
 ```bash
+.venv/bin/python check_oracle.py     # 7 vertailua julkaistuun ennusteeseen
+
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
 .venv/bin/python check.py            # 32 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
@@ -160,6 +162,59 @@ Kaksi korjausta jotka tulivat tämän mukana:
 `web/app.js`:n alussa, ja `gen_data.py` lisää lyhyen git-hashin (`v4 · 4f2a1c9`)
 jos hakemisto sattuu olemaan git-checkout — nyt ei ole, joten hash jää pois.
 
+### TASK 5 — vertailu julkaistuun ennusteeseen (valmis)
+
+`check_oracle.py` vertaa laskentaamme riippumattomaan julkaistuun ennusteeseen.
+**Lähde:** Fred Espenak, NASA/GSFC, *Path of the Total Solar Eclipse of 2027
+Aug 02*, <https://eclipse.gsfc.nasa.gov/SEpath/SEpath2001/SE2027Aug02Tpath.html>,
+haettu 8.8.2026. (EclipseWise palauttaa 403 automaattiselle haulle; NASA GSFC
+on saman tekijän julkaisu.) Vertailuarvot on kirjoitettu tiedostoon *sellaisenaan*
+lähteen omassa muodossa (`"25°38.3'N"`, `"06m22.7s"`) ja jäsennetään koodissa,
+jotta taulukon voi tarkistaa lähdesivua vasten rivi riviltä ilman laskutoimituksia.
+
+Jotta testi kohdistuu oikeasti siihen koodiin joka tuottaa kartan datan, jaettu
+fysiikka on siirretty uuteen `eclipse_core.py`:hyn, jonka sekä `gen_data.py`
+että `check_oracle.py` tuovat. Refaktorointi tarkistettiin ajamalla generaattori
+uudelleen: JSON oli tavulleen identtinen.
+
+17 keskilinjan pistettä koko polulta (Atlantti → Gibraltar → Tunisia → Libya →
+Luxor → Punaisenmeren rannikko → Arabia → Intian valtameri):
+
+| suure | tulos | vaatimus |
+|---|---|---|
+| kesto | **+1,4 … +2,1 s**, ka. +1,86 s | [−3, +5] s ✓ |
+| maksimin aika | **+3,5 … +5,0 s**, ka. +4,41 s | ±30 s ✓ |
+| suurin pimennys (10:06:37,7 UT) | kesto +2,0 s, aika +4,9 s | ✓ |
+| polun leveys (5 hetkeä) | **+1,8 … +2,8 km** / ~250 km | ±4 km ✓ |
+| julkaistut rajapisteet | 0,3 km ja 1,9 km omasta reunastamme | < 6 km ✓ |
+| Madrid (negatiivinen testi) | ei totaliteettia, magnitudi 0,879 | ✓ |
+
+**Molemmat systemaattiset erot selvitettiin mittaamalla, ei arvaamalla:**
+
+- **Kesto +1,9 s.** Kesto muuttuu **3 s jokaista Kuun säteen kilometriä kohti**
+  (mitattu: 1736,0 km → 380,6 s, 1739,0 km → 389,6 s). Espenakin taulukon
+  382,7 s toistuu säteellä ≈ 1736,6 km, kun me käytämme PLAN.md:n määräämää
+  IAU:n keskisädettä 1737,4 km — pienempi umbrakontaktien sädekonventio. 0,8 km
+  × 3 s/km = 2,4 s, eli koko ero. Emme vaihtaneet sädettä: PLAN.md määrittelee sen.
+- **Aika +4,4 s.** Keskilinjamme kulkee ~3,4 km Espenakin linjan länsipuolella;
+  radansuuntainen osuus 3,3 km jaettuna varjon nopeudella maanpinnalla
+  (0,668 km/s) = 4,9 s Luxorissa — tarkalleen havaittu ero. Osa tästä on ΔT:tä:
+  skyfield käyttää 69,1 s, Espenak 71,7 s. Kun skyfield pakotetaan Espenakin
+  arvoon, hajonta polun yli litistyy (+3,5…+5,0 s → +3,4…+3,7 s), mutta jäljelle
+  jää tasainen +3,6 s. Poikittaissuunnassa ero on vain ~1 km, minkä vuoksi
+  kestot täsmäävät niin hyvin.
+
+**Testi löysi oikean virheen.** Ensimmäisellä ajolla polun leveys oli
++2,6 … +7,8 km liian suuri, ja vaihtelu oli tasan yhden poikittaisnäytteen
+suuruinen. Syy: `cross()` interpoloi rajan viimeisen sisäpuolisen näytteen ja
+sen ulkopuolisen naapurin välillä, mutta ulkopuolisen kesto on kova nolla, joka
+ei kerro *missä* reuna on — vain että se on ennen sitä. Tämä työnsi rajan lähes
+ulkopuolisen näytteen päälle. Nyt reuna ekstrapoloidaan kahdesta viimeisestä
+*sisäpuolisesta* näytteestä, joissa sqrt-laki oikeasti pätee. Leveysero putosi
+**+2,6…+7,8 km → +1,8…+2,8 km** ja on nyt tasainen, eli sen selittää pelkkä
+Kuun säteen valinta. Vyöhyke oli aiemmin ~2,7 % liian leveä; paikkakuntien
+kestot eivät muuttuneet (ne eivät riipu rajaviivoista).
+
 ## Validointi
 
 | | laskettu | suunnitelman odotus |
@@ -211,8 +266,10 @@ Kestokäyrät kartalla näyttävät tämän suoraan.
 ## Tiedostot
 
 ```
+eclipse_core.py        jaettu fysiikka (umbrakriteeri, SkyTable, olosuhteet)
 gen_data.py            datageneraattori (numpy + skyfield)
 check.py               hyväksymistestit selaimessa (playwright)
+check_oracle.py        vertailu NASA/GSFC:n julkaistuun ennusteeseen
 data/eclipse2027.json  data suunnitelman muodossa
 web/index.html         sivu
 web/app.js             kartta, animaatio, kontrollit

@@ -31,14 +31,15 @@ import subprocess
 import time as _time
 
 import numpy as np
-from skyfield.api import load, wgs84
-from skyfield.framelib import itrs
+from skyfield.api import wgs84
+
+# The umbra criterion, the SkyTable and the per-site circumstances live in
+# eclipse_core so that check_oracle.py validates this exact code.
+from eclipse_core import (R_EARTH_KM, R_MOON_KM, R_SUN_KM, SkyTable, earth,
+                          local_circumstances, sun_moon_geocentric, ts,
+                          umbra_margin)
 
 # ---------------------------------------------------------------- constants
-
-R_SUN_KM = 696000.0
-R_MOON_KM = 1737.4
-R_EARTH_KM = 6371.0
 
 DATE = (2027, 8, 2)
 COARSE_STEP_S = 300.0        # phase 1: whole day, global 1 deg grid
@@ -95,79 +96,7 @@ def git_short_hash():
         return None
 
 
-# ---------------------------------------------------------------- ephemeris
-
-stamp("loading ephemeris")
-ts = load.timescale()
-eph = load("de421.bsp")
-earth, sun, moon = eph["earth"], eph["sun"], eph["moon"]
-
-
-def sun_moon_geocentric(t):
-    """Apparent GCRS positions of Sun and Moon from Earth's centre, in km.
-
-    Works for a scalar time or a time array; returns arrays shaped (3,) or (3, n).
-    """
-    e = earth.at(t)
-    return (e.observe(sun).apparent().position.km,
-            e.observe(moon).apparent().position.km)
-
-
-def umbra_margin(lat, lon, t, sg, mg):
-    """Angular margin r_moon - r_sun - separation, in radians.
-
-    Positive means the observer at (lat, lon) sees the Sun fully covered.
-    `sg` / `mg` are the geocentric Sun/Moon vectors already evaluated at `t`
-    and broadcast-compatible with the observer arrays.  Points where the Sun is
-    below the horizon are forced negative.
-    """
-    op = wgs84.latlon(lat, lon).at(t).position.km
-    sv = sg - op
-    mv = mg - op
-    sd = np.linalg.norm(sv, axis=0)
-    md = np.linalg.norm(mv, axis=0)
-    cosang = (sv * mv).sum(axis=0) / (sd * md)
-    sep = np.arccos(np.clip(cosang, -1.0, 1.0))
-    margin = np.arcsin(R_MOON_KM / md) - np.arcsin(R_SUN_KM / sd) - sep
-    up = op / np.linalg.norm(op, axis=0)
-    below = (up * sv).sum(axis=0) <= 0.0
-    return np.where(below, -9.9, margin)
-
-
-class SkyTable:
-    """Sun, Moon and Earth orientation precomputed on a fixed time grid.
-
-    Evaluating the umbra criterion for many observers at many times is only
-    fast if the expensive per-time work happens once.  skyfield recomputes the
-    ITRS->GCRS rotation for every (observer, time) pair it is handed, which
-    dominates the run time; here the rotation is stored per time step and
-    applied to the observers' fixed body-frame coordinates with an einsum.
-    """
-
-    def __init__(self, sec):
-        self.sec = np.asarray(sec, dtype=float)
-        t = ts.tt_jd(t_midnight.tt + self.sec / 86400.0)
-        self.sg, self.mg = sun_moon_geocentric(t)          # (3, nt)
-        self.rot = itrs.rotation_at(t)                     # (3, 3, nt)
-
-    def window(self, centre_sec, half_width_s):
-        i0, i1 = np.searchsorted(self.sec, [centre_sec - half_width_s,
-                                            centre_sec + half_width_s])
-        return int(i0), int(min(i1 + 1, self.sec.size))
-
-    def margin(self, lat, lon, i0, i1):
-        """Umbra margin in radians, shaped (n_points, n_times)."""
-        xyz = wgs84.latlon(np.atleast_1d(lat), np.atleast_1d(lon)).itrs_xyz.km
-        op = np.einsum("jci,jp->cpi", self.rot[:, :, i0:i1], xyz)
-        sv = self.sg[:, None, i0:i1] - op
-        mv = self.mg[:, None, i0:i1] - op
-        sd = np.linalg.norm(sv, axis=0)
-        md = np.linalg.norm(mv, axis=0)
-        sep = np.arccos(np.clip((sv * mv).sum(axis=0) / (sd * md), -1.0, 1.0))
-        m = np.arcsin(R_MOON_KM / md) - np.arcsin(R_SUN_KM / sd) - sep
-        up = op / np.linalg.norm(op, axis=0)
-        return np.where((up * sv).sum(axis=0) > 0, m, -9.9), sep, sd, md
-
+# ---------------------------------------------------------------- geometry
 
 def destination(lat0, lon0, bearing_deg, dist_km):
     """Great-circle destination point(s). Everything may be a numpy array."""
@@ -401,27 +330,44 @@ def durations_for(sky, points_lat, points_lon, centre_sec):
 def cross(level, offs, dur):
     """Offset where the duration profile crosses `level`, on each side of 0.
 
-    Duration behaves like sqrt(distance) near a limit, so the interpolation is
-    done on duration squared, which is close to linear there.
+    Duration behaves like sqrt(distance) near a limit, so duration squared is
+    close to linear there and that is what gets interpolated.
+
+    The sample just outside the path is a special case: its duration is a hard
+    zero, which says only "somewhere before here", not where.  Interpolating
+    towards it places the limit almost on top of it and inflates the path by up
+    to one sample spacing.  When the outer neighbour is that hard zero, the edge
+    is extrapolated from the last two samples still inside instead, where the
+    sqrt law actually holds.
     """
     out = [None, None]
     i0 = int(np.argmax(dur))
     if dur[i0] <= level:
         return out
-    for side, rng in ((1, range(i0, offs.size - 1)), (0, range(i0, 0, -1))):
+    for side in (1, 0):
+        step = 1 if side else -1
+        rng = range(i0, offs.size - 1) if side else range(i0, 0, -1)
         for i in rng:
-            j = i + 1 if side else i - 1
-            if dur[j] <= level < dur[i]:
-                d1, d2 = dur[i] ** 2, dur[j] ** 2
-                f = (d1 - level ** 2) / (d1 - d2) if d1 != d2 else 0.0
-                out[side] = offs[i] + f * (offs[j] - offs[i])
-                break
+            j = i + step
+            if not (dur[j] <= level < dur[i]):
+                continue
+            d1, d2 = dur[i] ** 2, dur[j] ** 2
+            k = i - step                       # one sample further inside
+            if dur[j] <= 0.0 and 0 <= k < offs.size and dur[k] > dur[i]:
+                slope = (dur[k] ** 2 - d1) / (offs[k] - offs[i])
+                out[side] = (offs[i] + (level ** 2 - d1) / slope if slope
+                             else offs[i])
+            elif d1 != d2:
+                out[side] = offs[i] + (d1 - level ** 2) / (d1 - d2) * (offs[j] - offs[i])
+            else:
+                out[side] = offs[i]
+            break
     return out
 
 
 stamp("phase 3: durations, path limits and duration contours")
 
-sky = SkyTable(np.arange(frames[0]["s"] - DUR_WIN_S - 60.0,
+sky = SkyTable(t_midnight, np.arange(frames[0]["s"] - DUR_WIN_S - 60.0,
                          frames[-1]["s"] + DUR_WIN_S + 60.0 + 1e-9, DUR_STEP_S))
 
 centre_dur = np.zeros(len(frames))
@@ -459,16 +405,8 @@ stamp(f"phase 3 done: max duration {centre_dur[imax]:.0f} s "
 # ------------------------------------------------------- marker circumstances
 
 stamp("markers: local circumstances")
-marker_sky = SkyTable(np.arange(frames[0]["s"] - 7200.0,
+marker_sky = SkyTable(t_midnight, np.arange(frames[0]["s"] - 7200.0,
                                 frames[-1]["s"] + 7200.0 + 1e-9, 2.0))
-
-
-def edge_cross(sec, f, i, forward):
-    """Time where f crosses zero next to index i, by linear interpolation."""
-    j = i + 1 if forward else i - 1
-    if j < 0 or j >= f.size or f[i] == f[j]:
-        return float(sec[i])
-    return float(sec[i] + (sec[j] - sec[i]) * f[i] / (f[i] - f[j]))
 
 
 def dist_to_path_km(lat, lon):
@@ -493,38 +431,9 @@ def dist_to_path_km(lat, lon):
 
 
 def circumstances(lat, lon):
-    """Contact times, totality duration, peak magnitude and time of maximum."""
-    sec = marker_sky.sec
-    m, sep, sd, md = marker_sky.margin(lat, lon, 0, sec.size)
-    m, sep, sd, md = m[0], sep[0], sd[0], md[0]
-    rs = np.arcsin(R_SUN_KM / sd)
-    rm = np.arcsin(R_MOON_KM / md)
-    visible = m > -9.0
-    fp = np.where(visible, rs + rm - sep, -9.9)      # >0 during any partial phase
-    out = {"lat": lat, "lon": lon}
-    if (fp > 0).any():
-        p = np.where(fp > 0)[0]
-        out["partial_start"] = edge_cross(sec, fp, p[0], False)
-        out["partial_end"] = edge_cross(sec, fp, p[-1], True)
-        # Eclipse magnitude: the fraction of the Sun's *diameter* covered at its
-        # deepest, which is what "NN % partial" normally quotes.
-        mag = (rs[p] + rm[p] - sep[p]) / (2 * rs[p])
-        k = p[int(np.argmax(mag))]
-        out["max_magnitude"] = float(np.clip(mag.max(), 0.0, 1.0))
-        # Refine the instant of maximum with a parabola through its neighbours.
-        if 0 < k < sec.size - 1:
-            y0, y1, y2 = -sep[k - 1], -sep[k], -sep[k + 1]
-            den = y0 - 2 * y1 + y2
-            shift = 0.5 * (y0 - y2) / den if den != 0 else 0.0
-            out["max_s"] = float(sec[k] + np.clip(shift, -1, 1) * (sec[1] - sec[0]))
-        else:
-            out["max_s"] = float(sec[k])
-    if (m > 0).any():
-        q = np.where(m > 0)[0]
-        out["total_start"] = edge_cross(sec, m, q[0], False)
-        out["total_end"] = edge_cross(sec, m, q[-1], True)
-        out["duration"] = out["total_end"] - out["total_start"]
-    else:
+    """Local circumstances, plus how far outside the path a partial site sits."""
+    out = local_circumstances(marker_sky, lat, lon)
+    if "duration" not in out:
         out["dist_to_path_km"] = round(dist_to_path_km(lat, lon), 1)
     return out
 
