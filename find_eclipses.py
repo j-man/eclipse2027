@@ -34,6 +34,10 @@ from eclipse_core import (SkyTable, classify, eph, geodetic,
 
 YEAR_FROM, YEAR_TO = 1986, 2066
 
+# The eclipse the page opens with. This is THE place it is defined: it travels
+# to the browser inside data/index.json, so nothing downstream repeats it.
+DEFAULT_ECLIPSE = "2026-08-12"
+
 COARSE_STEP_H = 6.0        # new-moon bracketing
 WINDOW_H = 6.0             # scanned either side of each new moon
 WINDOW_STEP_S = 180.0      # inside that window
@@ -71,6 +75,7 @@ REGIONS = [
 
 def write_index_js(index):
     """The page reads the catalogue as a plain global, so file:// works too."""
+    index.setdefault("default", DEFAULT_ECLIPSE)
     os.makedirs(os.path.join(HERE, "web"), exist_ok=True)
     with open(os.path.join(HERE, "web", "eclipse-index.js"), "w") as fh:
         fh.write("window.ECLIPSE_INDEX=" + json.dumps(index, separators=(",", ":"))
@@ -176,7 +181,7 @@ def main():
     found.sort(key=lambda e: e["date"])
     os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
     out = {"generated_from": f"JPL DE440s, {YEAR_FROM}-{YEAR_TO}",
-           "count": len(found), "eclipses": found}
+           "count": len(found), "default": DEFAULT_ECLIPSE, "eclipses": found}
     with open(os.path.join(HERE, "data", "index.json"), "w") as fh:
         json.dump(out, fh, indent=1)
     write_index_js(out)

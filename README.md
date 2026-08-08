@@ -1,8 +1,10 @@
 # Eclipse map — every total solar eclipse, 1986–2066
 
-Interactive map of **59 total and hybrid solar eclipses** between 1986 and 2066,
-opening on the **total eclipse of August 2, 2027** — the longest land totality
-of the 21st century (6 min 23 s near Luxor, Egypt).
+Interactive map of **59 total and hybrid solar eclipses** between 1986 and 2066.
+It opens on the next one to come — currently the **total eclipse of
+August 12, 2026** (Iceland → Spain) — and the catalogue includes
+**August 2, 2027**, the longest land totality of the 21st century
+(6 min 23 s near Luxor, Egypt).
 
 Everything is computed from scratch: the only external input is NASA JPL's
 DE440s ephemeris. The eclipse list itself is derived from the ephemeris too —
@@ -14,7 +16,8 @@ only to *check* the result (see Validation).
 ## Features
 
 - Slippy satellite map (Leaflet + Esri World Imagery), zoom & pan
-- Eclipse picker: 59 eclipses, 1986–2066, each loaded on demand
+- Eclipse picker in the title card: 59 eclipses grouped by decade, the next
+  one tagged, each loaded on demand
 - Path of totality: northern/southern limits, center line, duration contours
   (1 / 2 / 4 / 6 minutes)
 - Animated umbra moving along its true track at true speed — video-style

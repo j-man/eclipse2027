@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 URL = "file://" + os.path.join(HERE, "web", "index.html")
 
 SHOTS = {
-    "overview": "",
+    "default-view": "",
+    "overview": "eclipse.select('2027-08-02');",
     "spain": "eclipse.map.setView([36.5,-5.4],8); eclipse.setTime(31670);",
     "picker-open": "eclipse.openMenu();",
     "malaga-popup": ("eclipse.map.setView([36.55,-4.42],9); eclipse.setTime(31745);"
@@ -81,6 +82,26 @@ def main():
         page.goto(URL)
         page.wait_for_function("window.eclipse !== undefined", timeout=15000)
         page.wait_for_timeout(3000)
+
+        # 0. the page opens on the eclipse the catalogue nominates
+        cat0 = json.load(open(os.path.join(HERE, "data", "index.json")))
+        want_default = cat0.get("default")
+        check("0a. catalogue nominates a default eclipse",
+              want_default in {e["date"] for e in cat0["eclipses"]},
+              str(want_default))
+        check("0b. page opens on that eclipse, not on a hardcoded one",
+              page.evaluate("eclipse.data.meta.date") == want_default,
+              "showing " + page.evaluate("eclipse.data.meta.date"))
+        check("0c. its data was there for the first paint (no lazy fetch)",
+              page.evaluate("!!window.ECLIPSE_DATA")
+              and page.evaluate("window.ECLIPSE_DATA.meta.date") == want_default)
+
+        # Everything below examines the 2027 eclipse, which is no longer the
+        # one on screen at start-up, so switch to it first.
+        page.evaluate("eclipse.select('2027-08-02')")
+        page.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                               timeout=15000)
+        page.wait_for_timeout(1200)
 
         # 1. page opens, map renders, zoom and pan work
         check("1a. page loads with no JS errors", not problems, "; ".join(problems[:3]))
@@ -400,12 +421,21 @@ def main():
         check("9b. no second entry point is left over",
               not page.evaluate("!!document.getElementById('picker')"),
               "the old standalone <select> is gone")
-        check("9c. card opens showing today's eclipse and its position",
-              page.text_content("#card-title") == "2. elokuuta 2027"
+        check("9c. card names the eclipse on screen and its position",
+              page.text_content("#card-title") == "12. elokuuta 2026"
               and "/ %d" % len(rows) in page.text_content("#card-badge")
-              and page.evaluate("eclipse.data.meta.date") == "2027-08-02",
+              and page.evaluate("eclipse.data.meta.date") == want_default,
               page.text_content("#card-title") + " · "
               + page.text_content("#card-badge"))
+
+        # The trigger has to name the action, not just be clickable.
+        check("9c2. trigger row is a signposted control",
+              "Valitse pimennys" in page.text_content("#pick-label")
+              and "(%d)" % len(rows) in page.text_content("#pick-label")
+              and page.evaluate(
+                  "getComputedStyle(document.getElementById('pick-btn'))"
+                  ".borderTopWidth") != "0px",
+              page.text_content("#pick-label"))
 
         # The card must behave like a control: click to open, click to pick.
         check("9d. list is closed until the card is used",
@@ -425,6 +455,50 @@ def main():
               page.evaluate("document.getElementById('eclipse-menu').hidden")
               and page.text_content("#card-title") == "8. huhtikuuta 2024",
               page.text_content("#card-title"))
+
+        # List clarity: decade groups, the next eclipse tagged, past dimmed.
+        page.evaluate("eclipse.openMenu()")
+        page.wait_for_timeout(300)
+        groups = page.evaluate(
+            "[...document.querySelectorAll('#eclipse-menu .group')].map(g=>g.textContent)")
+        check("9f2. rows are grouped by decade",
+              len(groups) >= 8 and groups[0].startswith("1980"),
+              f"{len(groups)} groups: " + ", ".join(groups[:3]) + " ...")
+        tagged = page.evaluate(
+            "document.querySelector('#eclipse-menu .row.next')?.dataset.date")
+        upcoming = min(e["date"] for e in cat0["eclipses"]
+                       if e["date"] >= page.evaluate("new Date().toISOString().slice(0,10)"))
+        check("9f3. the next upcoming eclipse is tagged",
+              tagged == upcoming, f"tagged {tagged}, next is {upcoming}")
+        n_past = page.evaluate(
+            "document.querySelectorAll('#eclipse-menu .row.past').length")
+        check("9f4. past eclipses are dimmed, future ones are not",
+              0 < n_past < len(rows)
+              and page.evaluate(
+                  "getComputedStyle(document.querySelector"
+                  "('#eclipse-menu .row.past')).opacity") != "1",
+              f"{n_past} of {len(rows)} dimmed")
+        check("9f5. the selected row is scrolled into view on open",
+              page.evaluate("""() => {
+                  const m = document.getElementById('eclipse-menu');
+                  const r = m.querySelector('.row[aria-selected=\"true\"]');
+                  if (!r) return false;
+                  const a = m.getBoundingClientRect(), b = r.getBoundingClientRect();
+                  return b.top >= a.top - 1 && b.bottom <= a.bottom + 1;
+              }"""))
+        # A short window must still leave a usable, scrollable list.
+        page.set_viewport_size({"width": 1280, "height": 460})
+        page.wait_for_timeout(400)
+        check("9f6. list stays inside a short window and scrolls",
+              page.evaluate("""() => {
+                  const m = document.getElementById('eclipse-menu');
+                  const r = m.getBoundingClientRect();
+                  return r.bottom <= window.innerHeight + 1
+                         && m.scrollHeight > m.clientHeight;
+              }"""))
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.wait_for_timeout(400)
+        page.evaluate("eclipse.closeMenu()")
 
         # Keyboard: the card is a button, Esc closes.
         page.evaluate("document.getElementById('eclipse-card').focus()")
@@ -484,6 +558,12 @@ def main():
                 page.goto(URL)
                 page.wait_for_function("window.eclipse !== undefined")
                 page.wait_for_timeout(1500)
+                # Every scripted shot but the default-view one frames 2027.
+                if name not in ("overview", "default-view"):
+                    page.evaluate("eclipse.select('2027-08-02')")
+                    page.wait_for_function(
+                        "eclipse.data.meta.date === '2027-08-02'", timeout=15000)
+                    page.wait_for_timeout(800)
                 page.evaluate("eclipse.setPlaying(false)")
                 if js:
                     page.evaluate(js)

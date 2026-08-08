@@ -7,8 +7,9 @@
 
   // Bump by hand at each milestone. 1 = first working map, 2 = click-to-time,
   // 3 = full set of site markers, 4 = version badge, 5 = 1986-2066 catalogue,
-  // 6 = title card doubles as the eclipse picker.
-  var VERSION = 6;
+  // 6 = title card doubles as the eclipse picker, 7 = signposted trigger and
+  // grouped list, opening on the next eclipse rather than 2027.
+  var VERSION = 7;
 
   var SEEN_KEY = 'eclipse.pickerSeen';
 
@@ -17,7 +18,10 @@
                    'syyskuuta', 'lokakuuta', 'marraskuuta', 'joulukuuta'];
   var FI_TYPE = { total: 'täydellinen', hybrid: 'hybridi' };
 
-  var DEFAULT_DATE = '2027-08-02';
+  // Which eclipse opens first is decided by the catalogue (index.default, set
+  // in find_eclipses.py). This literal is only a floor for the case where the
+  // catalogue itself failed to load.
+  var FALLBACK_DATE = '2027-08-02';
   var ECLIPSE_DIR = '../data/eclipses/';
 
   var SPEEDS = [1, 60, 300, 600];
@@ -284,24 +288,43 @@
 
   function buildMenu() {
     catalog = (window.ECLIPSE_INDEX && window.ECLIPSE_INDEX.eclipses) || [];
-    if (!catalog.length) catalog = [{ date: DEFAULT_DATE, type: 'total',
+    if (!catalog.length) catalog = [{ date: FALLBACK_DATE, type: 'total',
                                       max_duration_s: 0, regions: '' }];
+
+    // "Next" is relative to whenever the page is opened, not to build time.
+    var today = new Date().toISOString().slice(0, 10);
+    var nextIdx = catalog.findIndex(function (e) { return e.date >= today; });
+
+    var decade = null;
     catalog.forEach(function (e, i) {
+      var dec = e.date.slice(0, 3) + '0';
+      if (dec !== decade) {
+        decade = dec;
+        var h = document.createElement('div');
+        h.className = 'group';
+        h.textContent = dec + '-luku';
+        el.menu.appendChild(h);
+      }
       var row = document.createElement('div');
-      row.className = 'row';
+      row.className = 'row' + (e.date < today ? ' past' : '') +
+                      (i === nextIdx ? ' next' : '');
       row.setAttribute('role', 'option');
       row.dataset.date = e.date;
       row.dataset.i = i;
+      row.title = e.date + ' · ' + (FI_TYPE[e.type] || e.type) + ' · ' +
+                  shortdur(e.max_duration_s) + ' · ' + e.regions;
       row.innerHTML =
         '<span class="d">' + e.date + '</span>' +
         '<span class="k' + (e.type === 'hybrid' ? ' hyb' : '') + '">' +
         (FI_TYPE[e.type] || e.type) + '</span>' +
-        '<span class="d">' + shortdur(e.max_duration_s) + '</span>' +
-        '<span class="g">' + e.regions + '</span>';
+        '<span class="d n">' + shortdur(e.max_duration_s) + '</span>' +
+        '<span class="g">' + e.regions + '</span>' +
+        (i === nextIdx ? '<span class="tag">seuraava</span>' : '<span></span>');
       row.onclick = function () { closeMenu(); selectEclipse(e.date); };
       el.menu.appendChild(row);
       rowFor[e.date] = row;
     });
+    el.pickLabel.textContent = 'Valitse pimennys (' + catalog.length + ')';
   }
 
   function openMenu() {
@@ -456,6 +479,7 @@
     el.menu = document.getElementById('eclipse-menu');
     el.cardTitle = document.getElementById('card-title');
     el.cardBadge = document.getElementById('card-badge');
+    el.pickLabel = document.getElementById('pick-label');
 
     map = L.map('map', {
       zoomControl: false,
@@ -573,12 +597,17 @@
     };
 
     maybePulse();
-    pending = DEFAULT_DATE;
-    if (window.ECLIPSE_DATA) {
-      cache[window.ECLIPSE_DATA.meta.date] = window.ECLIPSE_DATA;
+    var start = (window.ECLIPSE_INDEX && window.ECLIPSE_INDEX.default) ||
+                FALLBACK_DATE;
+    pending = start;
+    if (window.ECLIPSE_DATA && window.ECLIPSE_DATA.meta.date === start) {
+      cache[start] = window.ECLIPSE_DATA;
       showEclipse(window.ECLIPSE_DATA);
     } else {
-      selectEclipse(DEFAULT_DATE);
+      if (window.ECLIPSE_DATA) {
+        cache[window.ECLIPSE_DATA.meta.date] = window.ECLIPSE_DATA;
+      }
+      selectEclipse(start);
     }
   }
 

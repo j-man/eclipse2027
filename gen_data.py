@@ -44,10 +44,13 @@ from skyfield.api import wgs84
 from eclipse_core import (R_EARTH_KM, R_MOON_KM, R_SUN_KM, SkyTable, classify,
                           geodetic, local_circumstances, sun_moon_geocentric,
                           ts, umbra_margin)
+# The page's default eclipse is defined once, next to the catalogue it ships in.
+from find_eclipses import DEFAULT_ECLIPSE, write_index_js
 
 # ---------------------------------------------------------------- constants
 
-DEFAULT_DATE = "2027-08-02"
+# PLAN.md's eclipse: it alone keeps data/eclipse2027.json and the site markers.
+PLAN_DATE = "2027-08-02"
 
 COARSE_STEP_S = 300.0        # phase 1: whole day, global 1 deg grid
 FINE_STEP_S = 60.0           # phase 2: umbra outline / centre line cadence
@@ -552,6 +555,14 @@ def write_default(payload):
     return len(js)
 
 
+def write_bootstrap(payload):
+    """The default eclipse, eagerly loaded so the first paint needs no fetch."""
+    os.makedirs(os.path.join(HERE, "web"), exist_ok=True)
+    js = json.dumps(payload, separators=(",", ":"))
+    with open(os.path.join(HERE, "web", "eclipse-default.js"), "w") as fh:
+        fh.write("window.ECLIPSE_DATA=" + js + ";\n")
+
+
 def write_catalogued(payload):
     """One lazy-loaded file per eclipse, handed to the page via a callback."""
     out = os.path.join(HERE, "data", "eclipses")
@@ -571,14 +582,19 @@ def main():
     args = ap.parse_args()
 
     if not (args.all or args.only):
-        stamp(f"generating the default eclipse {DEFAULT_DATE}")
-        payload = generate(DEFAULT_DATE, MARKERS_2027)
-        if payload is None:
-            raise SystemExit("no umbra found on " + DEFAULT_DATE)
-        size = write_default(payload)
-        write_catalogued(payload)
-        stamp(f"wrote data/eclipse2027.json and web/eclipse2027.js "
-              f"({size / 1024:.0f} kB)")
+        # PLAN.md's eclipse, plus the one the page opens with when they differ,
+        # so a bare run always leaves a page that works.
+        for date in dict.fromkeys([PLAN_DATE, DEFAULT_ECLIPSE]):
+            stamp(f"generating {date}")
+            payload = generate(date, MARKERS_2027 if date == PLAN_DATE else ())
+            if payload is None:
+                raise SystemExit("no umbra found on " + date)
+            size = write_catalogued(payload)
+            if date == PLAN_DATE:
+                write_default(payload)
+            if date == DEFAULT_ECLIPSE:
+                write_bootstrap(payload)
+            stamp(f"  wrote data/eclipses/{date}.js ({size / 1024:.0f} kB)")
         return
 
     index_path = os.path.join(HERE, "data", "index.json")
@@ -597,7 +613,7 @@ def main():
         stamp(f"[{n}/{len(catalog)}] {date} ({e['type']})")
         try:
             payload = generate(date,
-                               MARKERS_2027 if date == DEFAULT_DATE else (),
+                               MARKERS_2027 if date == PLAN_DATE else (),
                                verbose=False, seed_utc=e.get("greatest_utc"))
         except Exception as exc:                      # keep the batch going
             failed.append((date, repr(exc)))
@@ -609,8 +625,10 @@ def main():
             continue
         size = write_catalogued(payload)
         total += size
-        if date == DEFAULT_DATE:
+        if date == PLAN_DATE:
             write_default(payload)
+        if date == DEFAULT_ECLIPSE:
+            write_bootstrap(payload)
         # The discovery pass only estimated the duration at the greatest-eclipse
         # point; replace it with the pipeline's own maximum over the centre line.
         m = payload["meta"]
@@ -627,9 +645,9 @@ def main():
                              if e["date"] not in {d for d, _ in failed}]
         index["count"] = len(index["eclipses"])
         index["total_bytes"] = total
+    index["default"] = DEFAULT_ECLIPSE
     with open(index_path, "w") as fh:
         json.dump(index, fh, indent=1)
-    from find_eclipses import write_index_js
     write_index_js(index)
 
     stamp(f"done: {len(catalog) - len(failed)}/{len(catalog)} generated, "

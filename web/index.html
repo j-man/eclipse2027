@@ -18,15 +18,17 @@
   <button id="eclipse-card" type="button"
           aria-haspopup="listbox" aria-expanded="false" aria-controls="eclipse-menu">
     <span class="eyebrow">Täydelliset auringonpimennykset</span>
-    <span class="card-head">
-      <span id="card-title">&nbsp;</span>
-      <svg id="chev" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M6 9.5 12 15.5 18 9.5" fill="none" stroke="currentColor"
-              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </span>
+    <span id="card-title">&nbsp;</span>
     <span id="card-badge"></span>
     <span id="title-info"></span>
+    <!-- The signpost: a row that looks like a button and names the action. -->
+    <span id="pick-btn">
+      <span id="pick-label">Valitse pimennys</span>
+      <svg id="chev" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 9 12 16 19 9" fill="none" stroke="currentColor"
+              stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
   </button>
     <div id="eclipse-menu" role="listbox" aria-label="Valitse pimennys" hidden></div>
   </div>
@@ -56,7 +58,7 @@
      The catalogue is small and always loaded; each eclipse's geometry is pulled
      in on demand from ../data/eclipses/ when it is picked. -->
 <script src="eclipse-index.js"></script>
-<script src="eclipse2027.js"></script>
+<script src="eclipse-default.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

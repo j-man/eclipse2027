@@ -90,30 +90,51 @@ html, body {
   text-transform: uppercase;
   color: #767d90;
 }
-#eclipse-card .card-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
 #card-title {
+  display: block;
+  margin-top: 2px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.2px;
 }
+
+/* A title that happens to be clickable is not an affordance. This row is:
+   own surface, own border, an action verb, and a chevron with room to breathe. */
+#pick-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 7px 10px 7px 12px;
+  border: 1px solid rgba(255, 210, 74, 0.45);
+  border-radius: 9px;
+  background: rgba(255, 210, 74, 0.13);
+  color: #ffd75c;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  transition: background 120ms, border-color 120ms;
+}
+#eclipse-card:hover #pick-btn,
+#eclipse-card:focus-visible #pick-btn,
+#eclipse-card[aria-expanded="true"] #pick-btn {
+  background: rgba(255, 210, 74, 0.24);
+  border-color: rgba(255, 210, 74, 0.8);
+  color: #fff0bd;
+}
 #chev {
-  width: 16px;
-  height: 16px;
+  width: 19px;
+  height: 19px;
   flex: none;
-  color: #ffd24a;
   transition: transform 160ms;
 }
 #eclipse-card[aria-expanded="true"] #chev { transform: rotate(180deg); }
 
 /* One-time nudge on a first visit, then never again. */
 @keyframes chev-pulse {
-  0%, 100% { transform: translateY(0); opacity: 0.85; }
-  50%      { transform: translateY(3px); opacity: 1; }
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(4px); }
 }
 #chev.pulse { animation: chev-pulse 900ms ease-in-out 3; }
 
@@ -153,8 +174,23 @@ html, body {
   backdrop-filter: blur(8px);
 }
 #eclipse-menu[hidden] { display: none; }
+
+/* Decade dividers, so 59 rows can be scanned instead of read. */
+#eclipse-menu .group {
+  padding: 7px 8px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #6f7688;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+#eclipse-menu .group:first-child { border-top: none; padding-top: 2px; }
+
+/* Fixed columns rather than one run-on string. */
 #eclipse-menu .row {
-  display: flex;
+  display: grid;
+  /* The tag gets its own track: inside the region column the ellipsis ate it. */
+  grid-template-columns: 74px 74px 46px 1fr auto;
   gap: 8px;
   align-items: baseline;
   padding: 5px 8px;
@@ -163,16 +199,22 @@ html, body {
   cursor: pointer;
   white-space: nowrap;
 }
+#eclipse-menu .row.past { opacity: 0.5; }
 #eclipse-menu .row:hover,
-#eclipse-menu .row.active { background: rgba(255, 255, 255, 0.10); }
+#eclipse-menu .row.active {
+  background: rgba(255, 255, 255, 0.11);
+  opacity: 1;
+}
 #eclipse-menu .row[aria-selected="true"] {
-  background: rgba(255, 210, 74, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(255, 210, 74, 0.4);
+  background: rgba(255, 210, 74, 0.17);
+  box-shadow: inset 0 0 0 1px rgba(255, 210, 74, 0.45);
+  opacity: 1;
 }
 #eclipse-menu .d {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-weight: 600;
 }
+#eclipse-menu .n { text-align: right; }
 #eclipse-menu .k { color: #ffc93c; }
 #eclipse-menu .k.hyb { color: #7fd4ff; }
 #eclipse-menu .g {
@@ -180,6 +222,20 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The next eclipse that has not happened yet. */
+#eclipse-menu .tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 20px;
+  background: #38d39f;
+  color: #04120c;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+#eclipse-menu .row.next .d { color: #6ff0c0; }
 #title p.hint {
   margin: 7px 2px 0;
   font-size: 11px;

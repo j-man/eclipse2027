@@ -307,6 +307,21 @@ nuolinäppäimet selaavat listaa, Esc sulkee, klikkaus muualle sulkee. Versio 6.
 Samalla korjautui piilevä vika: napin päällä välilyönti laukaisi sekä napin
 oman toiminnon että globaalin play/pause-oikotien, jotka kumosivat toisensa.
 
+### TASK 8 — selkeämpi valitsin ja 2026-08-12 oletukseksi (valmis)
+
+Sivu avautuu nyt **12.8.2026** pimennykseen (Islanti → Espanja, neljä päivää
+tästä päivästä); oletus on määritelty yhdessä paikassa, `find_eclipses.py`:n
+`DEFAULT_ECLIPSE`-vakiossa, ja kulkee selaimeen `data/index.json`:in
+`default`-kentässä — `app.js`:ssä on vain varafallback jos luetteloa ei saada
+ladattua lainkaan. 2027-08-02 säilyy listassa ja pitää edelleen omat
+`data/eclipse2027.json`-tiedostonsa ja paikkamerkkinsä (`PLAN_DATE`).
+Kortin sisällä on nyt oma **napilta näyttävä rivi** `Valitse pimennys (59) ▾`
+— oma pinta, reunus, hover-tila ja isompi nuoli; pelkkä klikattava otsikko ei
+ollut affordanssi. Lista on sarakkeistettu (päivä | tyyppi | kesto | alue),
+jaettu vuosikymmenotsikoilla, menneet himmennetty, valittu korostettu ja
+seuraava tuleva merkitty `SEURAAVA`-lipulla (laskettu selaimen kellosta, ei
+käännösajasta). Versio 7.
+
 ## Validointi
 
 | | laskettu | suunnitelman odotus |
