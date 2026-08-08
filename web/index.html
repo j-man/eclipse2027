@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Täydellinen auringonpimennys 2.8.2027</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="title">
+  <h1>Täydellinen auringonpimennys</h1>
+  <p><span id="title-date">2. elokuuta 2027</span> · <span id="title-max"></span></p>
+</div>
+
+<div id="bar">
+  <div id="controls">
+    <button id="play" aria-label="Toista / pysäytä">
+      <svg viewBox="0 0 24 24" class="ico-play"><path d="M8 5v14l11-7z"/></svg>
+      <svg viewBox="0 0 24 24" class="ico-pause"><path d="M7 5h3.2v14H7zm6.8 0H17v14h-3.2z"/></svg>
+    </button>
+    <button id="speed" aria-label="Nopeus">300&times;</button>
+    <button id="jump" aria-label="Hyppää suurimpaan pimennykseen">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.3V12l3.2 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    </button>
+    <input id="slider" type="range" min="0" max="1000" value="0" step="1" aria-label="Aika">
+  </div>
+  <div id="clock">
+    <div id="clock-time">--:--:--</div>
+    <div id="clock-date">UTC · 2 AUG</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Data as a plain script assignment so the page also works from a file:// URL. -->
+<script src="eclipse2027.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

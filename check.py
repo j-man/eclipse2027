@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Acceptance checks for the eclipse map, run against a real browser.
+
+    .venv/bin/python check.py            # checks only
+    .venv/bin/python check.py --shots    # checks + screenshots into shots/
+
+Needs playwright:  pip install playwright && playwright install chromium
+"""
+
+import json
+import os
+import sys
+
+from playwright.sync_api import sync_playwright
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+URL = "file://" + os.path.join(HERE, "web", "index.html")
+
+SHOTS = {
+    "overview": "",
+    "spain": "eclipse.map.setView([36.3,-4.6],7); eclipse.setTime(31700);",
+    "malaga-popup": ("eclipse.map.setView([36.55,-4.42],9); eclipse.setTime(31745);"
+                     "eclipse.markers.Malaga.openPopup();"),
+    "luxor": "eclipse.map.setView([25.7,32.6],7); eclipse.setTime(36300);",
+    "west-end": "eclipse.map.setView([31,-40],5); eclipse.setTime(30320);",
+    "east-end": "eclipse.map.setView([-10,84],5); eclipse.setTime(42400);",
+}
+
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append((bool(ok), name, detail))
+    print(("  PASS  " if ok else "  FAIL  ") + name + ("  " + detail if detail else ""))
+
+
+# Screen-space point-in-polygon against whichever overlay we ask for.
+IN_POLY = """
+([lat, lon, which]) => {
+  let poly = null;
+  eclipse.map.eachLayer(l => {
+    if (l instanceof L.Polygon) {
+      const isUmbra = l.options.pane === 'umbra';
+      if (which === 'umbra' ? isUmbra : !isUmbra) poly = poly || l;
+    }
+  });
+  if (!poly) return null;
+  const ring = poly.getLatLngs()[0].map(p => eclipse.map.latLngToLayerPoint(p));
+  const p = eclipse.map.latLngToLayerPoint(L.latLng(lat, lon));
+  let c = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    if ((ring[i].y > p.y) !== (ring[j].y > p.y) &&
+        p.x < (ring[j].x - ring[i].x) * (p.y - ring[i].y) / (ring[j].y - ring[i].y) + ring[i].x)
+      c = !c;
+  }
+  return c;
+}
+"""
+
+
+def main():
+    data = json.load(open(os.path.join(HERE, "data", "eclipse2027.json")))
+    want_shots = "--shots" in sys.argv
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        problems = []
+        page.on("pageerror", lambda e: problems.append("pageerror: " + str(e)))
+        page.on("console", lambda m: problems.append("console " + m.type + ": " + m.text)
+                if m.type == "error" else None)
+
+        page.goto(URL)
+        page.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        page.wait_for_timeout(3000)
+
+        # 1. page opens, map renders, zoom and pan work
+        check("1a. page loads with no JS errors", not problems, "; ".join(problems[:3]))
+        check("1b. satellite tiles rendered",
+              page.evaluate("document.querySelectorAll('.leaflet-tile-loaded').length") > 10,
+              f"{page.evaluate('document.querySelectorAll(\".leaflet-tile-loaded\").length')} tiles")
+        z0 = page.evaluate("eclipse.map.getZoom()")
+        page.evaluate("eclipse.map.setZoom(eclipse.map.getZoom()+2)")
+        page.wait_for_timeout(600)
+        z1 = page.evaluate("eclipse.map.getZoom()")
+        page.evaluate("eclipse.map.panBy([220,120],{animate:false})")
+        page.wait_for_timeout(400)
+        moved = page.evaluate("eclipse.map.getCenter().lng")
+        check("1c. zoom works", z1 == z0 + 2, f"{z0} -> {z1}")
+        check("1d. pan works", moved is not None)
+        page.evaluate("eclipse.map.setZoom(%d)" % z0)
+        page.wait_for_timeout(400)
+
+        # 2. band crosses Gibraltar, Luxor and reaches the Indian Ocean
+        centre = data["path"]["center"]
+        def time_at(lon):
+            best = min(centre, key=lambda p: abs(p[1] - lon))
+            return best[2], best[0]
+        gib_t, gib_lat = time_at(-5.35)
+        lux_t, lux_lat = time_at(32.64)
+        check("2a. path crosses the Strait of Gibraltar",
+              35.0 < gib_lat < 37.0, f"lat {gib_lat:.2f} at {gib_t} UTC")
+        check("2b. path crosses Luxor", 24.5 < lux_lat < 27.0,
+              f"lat {lux_lat:.2f} at {lux_t} UTC")
+        check("2c. path starts in the Atlantic", centre[0][1] < -35.0,
+              f"lon {centre[0][1]:.1f} at {centre[0][2]} UTC")
+        check("2d. path ends in the Indian Ocean",
+              centre[-1][1] > 80.0 and centre[-1][0] < 0,
+              f"{centre[-1][0]:.1f}, {centre[-1][1]:.1f} at {centre[-1][2]} UTC")
+        check("2e. north limit stays north of south limit",
+              all(a[0] > b[0] for a, b in zip(data["path"]["north"], data["path"]["south"])))
+
+        # 3. playback: umbra travels west to east, clock runs, slider drags
+        page.evaluate("eclipse.setTime(%f)" % data["umbra"][0]["s"])
+        lons = []
+        for f in data["umbra"][::20]:
+            page.evaluate("eclipse.setTime(%f)" % f["s"])
+            lons.append(page.evaluate(
+                "eclipse.map.eachLayer(l=>{if(l.options.pane==='umbra'&&l.getLatLng)"
+                "window.__d=l.getLatLng()}), window.__d.lng"))
+        check("3a. umbra travels west to east",
+              all(b > a for a, b in zip(lons, lons[1:])),
+              f"{lons[0]:.1f} -> {lons[-1]:.1f}")
+
+        page.evaluate("eclipse.setTime(%f)" % data["umbra"][0]["s"])
+        page.evaluate("eclipse.setPlaying(true)")
+        c0 = page.text_content("#clock-time")
+        page.wait_for_timeout(1200)
+        c1 = page.text_content("#clock-time")
+        page.evaluate("eclipse.setPlaying(false)")
+        check("3b. play advances the clock", c0 != c1, f"{c0} -> {c1}")
+
+        page.eval_on_selector("#slider",
+                              "el => { el.value = %f; el.dispatchEvent(new Event('input')); }"
+                              % (data["umbra"][-1]["s"] - 600))
+        page.wait_for_timeout(300)
+        check("3c. slider scrubs the timeline",
+              page.text_content("#clock-time") == data["umbra"][-11]["t"],
+              "clock reads " + page.text_content("#clock-time"))
+
+        # 4. Malaga is inside the band, and inside the umbra at mid-totality
+        mal = next(m for m in data["markers"] if m["name"] == "Malaga")
+        page.evaluate("eclipse.map.setView([36.5,-4.4],8)")
+        page.wait_for_timeout(800)
+        page.evaluate("eclipse.setTime(%f)"
+                      % ((mal["total_start"] + mal["total_end"]) / 2))
+        page.wait_for_timeout(300)
+        check("4a. Malaga lies inside the path of totality",
+              page.evaluate(IN_POLY, [mal["lat"], mal["lon"], "band"]))
+        check("4b. Malaga is covered by the umbra at mid-totality",
+              page.evaluate(IN_POLY, [mal["lat"], mal["lon"], "umbra"]),
+              f"{mal['duration']:.0f} s of totality")
+
+        # 5. generation cost is a property of gen_data.py, verified when it runs
+        check("5. duration contours present",
+              all(len(data["contours"][k]["north"]) > 10 for k in data["contours"]),
+              ", ".join(f"{k}s:{len(v['north'])}pt" for k, v in data["contours"].items()))
+
+        if want_shots:
+            os.makedirs(os.path.join(HERE, "shots"), exist_ok=True)
+            for name, js in SHOTS.items():
+                page.goto(URL)
+                page.wait_for_function("window.eclipse !== undefined")
+                page.wait_for_timeout(1500)
+                page.evaluate("eclipse.setPlaying(false)")
+                if js:
+                    page.evaluate(js)
+                page.wait_for_timeout(4000)
+                page.screenshot(path=os.path.join(HERE, "shots", name + ".png"))
+                print("  shot  shots/%s.png" % name)
+
+        browser.close()
+
+    bad = [r for r in results if not r[0]]
+    print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

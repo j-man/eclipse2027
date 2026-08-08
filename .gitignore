@@ -1,0 +1,7 @@
+.venv/
+de421.bsp
+shots/*
+!shots/luxor.png
+reference-*.png
+__pycache__/
+*.pyc
