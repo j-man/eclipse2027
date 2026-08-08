@@ -6,8 +6,16 @@
   'use strict';
 
   // Bump by hand at each milestone. 1 = first working map, 2 = click-to-time,
-  // 3 = full set of site markers, 4 = version badge, 5 = 1986-2066 catalogue.
-  var VERSION = 5;
+  // 3 = full set of site markers, 4 = version badge, 5 = 1986-2066 catalogue,
+  // 6 = title card doubles as the eclipse picker.
+  var VERSION = 6;
+
+  var SEEN_KEY = 'eclipse.pickerSeen';
+
+  var FI_MONTHS = ['tammikuuta', 'helmikuuta', 'maaliskuuta', 'huhtikuuta',
+                   'toukokuuta', 'kesäkuuta', 'heinäkuuta', 'elokuuta',
+                   'syyskuuta', 'lokakuuta', 'marraskuuta', 'joulukuuta'];
+  var FI_TYPE = { total: 'täydellinen', hybrid: 'hybridi' };
 
   var DEFAULT_DATE = '2027-08-02';
   var ECLIPSE_DIR = '../data/eclipses/';
@@ -50,6 +58,12 @@
     return Math.floor(sec / 60) + 'm' + pad(sec % 60) + 's';
   }
 
+  function fiDate(iso) {
+    var p = iso.split('-');
+    return parseInt(p[2], 10) + '. ' + FI_MONTHS[parseInt(p[1], 10) - 1] +
+           ' ' + p[0];
+  }
+
   function wrapLon(lon) { return ((lon + 540) % 360) - 180; }
 
   // Paths that cross the antimeridian are stored as continuous longitudes, so a
@@ -81,6 +95,7 @@
   var data = null, frames = [], t0 = 0, t1 = 0, stepS = 60;
   var now = 0, speedIdx = 2, playing = false, last = 0;
   var el = {};
+  var catalog = [], rowFor = {}, menuOpen = false;
 
   // -- eclipse geometry ----------------------------------------------------
 
@@ -237,10 +252,14 @@
 
     var dt = new Date(d.meta.date + 'T00:00:00Z');
     el.clockDate.textContent = 'UTC · ' + dt.getUTCDate() + ' ' + MONTHS[dt.getUTCMonth()];
-    el.titleInfo.textContent = d.meta.date + ' · kesto keskilinjalla enintään ' +
+    el.cardTitle.textContent = fiDate(d.meta.date);
+    var i = catalog.findIndex(function (e) { return e.date === d.meta.date; });
+    var kind = i >= 0 ? (FI_TYPE[catalog[i].type] || catalog[i].type) : '';
+    el.cardBadge.textContent = (i >= 0 ? (i + 1) + ' / ' + catalog.length +
+                                ' pimennystä' : '') + (kind ? ' · ' + kind : '');
+    el.titleInfo.textContent = 'kesto keskilinjalla enintään ' +
                                mmss(d.meta.max_duration_s);
     el.version.textContent = 'v' + VERSION + (d.meta.git ? ' · ' + d.meta.git : '');
-    if (el.picker.value !== d.meta.date) el.picker.value = d.meta.date;
 
     el.slider.min = t0;
     el.slider.max = t1;
@@ -261,14 +280,79 @@
 
   // -- lazy loading --------------------------------------------------------
 
+  // -- the picker: the title card is the trigger, the list hangs under it ----
+
+  function buildMenu() {
+    catalog = (window.ECLIPSE_INDEX && window.ECLIPSE_INDEX.eclipses) || [];
+    if (!catalog.length) catalog = [{ date: DEFAULT_DATE, type: 'total',
+                                      max_duration_s: 0, regions: '' }];
+    catalog.forEach(function (e, i) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      row.setAttribute('role', 'option');
+      row.dataset.date = e.date;
+      row.dataset.i = i;
+      row.innerHTML =
+        '<span class="d">' + e.date + '</span>' +
+        '<span class="k' + (e.type === 'hybrid' ? ' hyb' : '') + '">' +
+        (FI_TYPE[e.type] || e.type) + '</span>' +
+        '<span class="d">' + shortdur(e.max_duration_s) + '</span>' +
+        '<span class="g">' + e.regions + '</span>';
+      row.onclick = function () { closeMenu(); selectEclipse(e.date); };
+      el.menu.appendChild(row);
+      rowFor[e.date] = row;
+    });
+  }
+
+  function openMenu() {
+    if (menuOpen) return;
+    menuOpen = true;
+    el.menu.hidden = false;
+    el.card.setAttribute('aria-expanded', 'true');
+    stopPulse();
+    var cur = rowFor[pending];
+    if (cur) cur.scrollIntoView({ block: 'center' });
+  }
+
+  function closeMenu() {
+    if (!menuOpen) return;
+    menuOpen = false;
+    el.menu.hidden = true;
+    el.card.setAttribute('aria-expanded', 'false');
+  }
+
+  function stopPulse() { el.chev.classList.remove('pulse'); }
+
+  // A single gentle nudge the first time this browser ever sees the page. The
+  // flag is written as soon as the cue starts, not when it ends, so closing the
+  // page mid-animation still counts as having been shown it.
+  function maybePulse() {
+    var seen;
+    try { seen = localStorage.getItem(SEEN_KEY); } catch (err) { seen = '1'; }
+    if (seen) return;
+    try { localStorage.setItem(SEEN_KEY, '1'); } catch (err) { /* private mode */ }
+    el.chev.classList.add('pulse');
+    setTimeout(stopPulse, 3000);
+  }
+
+  function moveActive(delta) {
+    var rows = el.menu.querySelectorAll('.row');
+    var cur = el.menu.querySelector('.row.active') || rowFor[pending];
+    var i = cur ? parseInt(cur.dataset.i, 10) : 0;
+    i = Math.max(0, Math.min(rows.length - 1, i + delta));
+    rows.forEach(function (r) { r.classList.remove('active'); });
+    rows[i].classList.add('active');
+    rows[i].scrollIntoView({ block: 'nearest' });
+  }
+
   var pending = null;        // the eclipse the user last asked for
 
   function selectEclipse(date) {
     pending = date;
-    if (el.picker.value !== date) {
-      // Only settable when the catalogue actually offers that option.
-      el.picker.value = date;
-    }
+    Object.keys(rowFor).forEach(function (d) {
+      rowFor[d].setAttribute('aria-selected', d === date ? 'true' : 'false');
+      rowFor[d].classList.remove('active');
+    });
     if (cache[date]) { showEclipse(cache[date]); return; }
     el.titleInfo.textContent = 'ladataan ' + date + '…';
     var s = document.createElement('script');
@@ -362,12 +446,16 @@
   // -- start up ------------------------------------------------------------
 
   function init() {
-    ['picker', 'slider', 'play', 'speed', 'jump', 'version'].forEach(function (id) {
+    ['slider', 'play', 'speed', 'jump', 'version', 'chev'].forEach(function (id) {
       el[id] = document.getElementById(id);
     });
     el.time = document.getElementById('clock-time');
     el.clockDate = document.getElementById('clock-date');
     el.titleInfo = document.getElementById('title-info');
+    el.card = document.getElementById('eclipse-card');
+    el.menu = document.getElementById('eclipse-menu');
+    el.cardTitle = document.getElementById('card-title');
+    el.cardBadge = document.getElementById('card-badge');
 
     map = L.map('map', {
       zoomControl: false,
@@ -400,23 +488,14 @@
 
     clickPopup = L.popup({ maxWidth: 250, className: 'click-popup', autoPan: false });
 
-    // Catalogue -> dropdown.
-    var cat = (window.ECLIPSE_INDEX && window.ECLIPSE_INDEX.eclipses) || [];
-    cat.forEach(function (e) {
-      var o = document.createElement('option');
-      o.value = e.date;
-      o.textContent = e.date + ' · ' + e.type + ' · ' +
-                      shortdur(e.max_duration_s) + ' · ' + e.regions;
-      el.picker.appendChild(o);
+    buildMenu();
+    el.card.onclick = function () { menuOpen ? closeMenu() : openMenu(); };
+    // A click anywhere else dismisses it; the card's own click is handled above.
+    document.addEventListener('mousedown', function (e) {
+      if (menuOpen && !el.menu.contains(e.target) && !el.card.contains(e.target)) {
+        closeMenu();
+      }
     });
-    if (!cat.length) {
-      var o2 = document.createElement('option');
-      o2.value = DEFAULT_DATE;
-      o2.textContent = DEFAULT_DATE + ' · total';
-      el.picker.appendChild(o2);
-    }
-    el.picker.value = DEFAULT_DATE;
-    el.picker.onchange = function () { selectEclipse(el.picker.value); };
 
     // Controls.
     el.play.onclick = function () { setPlaying(!playing); };
@@ -462,7 +541,20 @@
     });
 
     document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'SELECT') return;
+      if (menuOpen) {
+        // While the list is open the arrows walk it rather than the timeline.
+        if (e.key === 'Escape') { e.preventDefault(); closeMenu(); el.card.focus(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); }
+        else if (e.key === 'Enter') {
+          var a = el.menu.querySelector('.row.active');
+          if (a) { e.preventDefault(); closeMenu(); selectEclipse(a.dataset.date); }
+        }
+        return;
+      }
+      // Buttons handle their own Enter/Space; letting the shortcut through as
+      // well would fire the action twice and cancel itself out.
+      if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
       if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
       if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
       else if (e.key === 'ArrowRight') { setPlaying(false); setTime(now + stepS); }
@@ -475,9 +567,12 @@
       markers: siteMarkers, isPlaying: function () { return playing; },
       time: function () { return now; }, closestApproach: closestApproach,
       totalityAt: totalityAt, select: selectEclipse,
-      index: window.ECLIPSE_INDEX || null, version: VERSION
+      index: window.ECLIPSE_INDEX || null, version: VERSION,
+      openMenu: openMenu, closeMenu: closeMenu,
+      menuOpen: function () { return menuOpen; }, catalog: catalog
     };
 
+    maybePulse();
     pending = DEFAULT_DATE;
     if (window.ECLIPSE_DATA) {
       cache[window.ECLIPSE_DATA.meta.date] = window.ECLIPSE_DATA;

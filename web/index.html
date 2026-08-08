@@ -14,9 +14,22 @@
 <div id="version"></div>
 
 <div id="title">
-  <h1>Täydelliset auringonpimennykset</h1>
-  <select id="picker" aria-label="Valitse pimennys"></select>
-  <p id="title-info"></p>
+  <div id="picker-wrap">
+  <button id="eclipse-card" type="button"
+          aria-haspopup="listbox" aria-expanded="false" aria-controls="eclipse-menu">
+    <span class="eyebrow">Täydelliset auringonpimennykset</span>
+    <span class="card-head">
+      <span id="card-title">&nbsp;</span>
+      <svg id="chev" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6 9.5 12 15.5 18 9.5" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <span id="card-badge"></span>
+    <span id="title-info"></span>
+  </button>
+    <div id="eclipse-menu" role="listbox" aria-label="Valitse pimennys" hidden></div>
+  </div>
   <p class="hint">Klikkaa karttaa: kello siirtyy siihen hetkeen</p>
 </div>
 

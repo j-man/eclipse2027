@@ -20,6 +20,7 @@ URL = "file://" + os.path.join(HERE, "web", "index.html")
 SHOTS = {
     "overview": "",
     "spain": "eclipse.map.setView([36.5,-5.4],8); eclipse.setTime(31670);",
+    "picker-open": "eclipse.openMenu();",
     "malaga-popup": ("eclipse.map.setView([36.55,-4.42],9); eclipse.setTime(31745);"
                      "eclipse.markers.Malaga.openPopup();"),
     "sevilla-popup": ("eclipse.map.setView([37.05,-5.98],8); eclipse.setTime(31620);"
@@ -387,19 +388,56 @@ def main():
               not absent, "missing: " + ", ".join(absent[:4]) if absent
               else f"{len(rows)} files")
 
-        # 9. the picker drives the map
+        # 9. the title card is the picker
         page.goto(URL)
         page.wait_for_function("window.eclipse !== undefined", timeout=15000)
         page.wait_for_timeout(2500)
-        opts = page.evaluate("document.getElementById('picker').options.length")
-        check("9a. picker lists the whole catalogue",
-              opts == len(rows), f"{opts} options")
-        check("9b. default selection is 2027-08-02",
-              page.evaluate("document.getElementById('picker').value") == "2027-08-02"
-              and page.evaluate("eclipse.data.meta.date") == "2027-08-02")
+
+        n_rows = page.evaluate(
+            "document.querySelectorAll('#eclipse-menu .row').length")
+        check("9a. the card's list holds the whole catalogue",
+              n_rows == len(rows), f"{n_rows} rows")
+        check("9b. no second entry point is left over",
+              not page.evaluate("!!document.getElementById('picker')"),
+              "the old standalone <select> is gone")
+        check("9c. card opens showing today's eclipse and its position",
+              page.text_content("#card-title") == "2. elokuuta 2027"
+              and "/ %d" % len(rows) in page.text_content("#card-badge")
+              and page.evaluate("eclipse.data.meta.date") == "2027-08-02",
+              page.text_content("#card-title") + " · "
+              + page.text_content("#card-badge"))
+
+        # The card must behave like a control: click to open, click to pick.
+        check("9d. list is closed until the card is used",
+              page.evaluate("document.getElementById('eclipse-menu').hidden")
+              and page.get_attribute("#eclipse-card", "aria-expanded") == "false")
+        page.click("#eclipse-card")
+        page.wait_for_timeout(400)
+        check("9e. clicking the card opens the list",
+              page.evaluate("eclipse.menuOpen()")
+              and page.get_attribute("#eclipse-card", "aria-expanded") == "true")
+
+        page.click("#eclipse-menu .row[data-date='2024-04-08']")
+        page.wait_for_function("eclipse.data.meta.date === '2024-04-08'",
+                               timeout=10000)
+        page.wait_for_timeout(400)
+        check("9f. picking a row switches the eclipse and closes the list",
+              page.evaluate("document.getElementById('eclipse-menu').hidden")
+              and page.text_content("#card-title") == "8. huhtikuuta 2024",
+              page.text_content("#card-title"))
+
+        # Keyboard: the card is a button, Esc closes.
+        page.evaluate("document.getElementById('eclipse-card').focus()")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        opened_by_key = page.evaluate("eclipse.menuOpen()")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        check("9g. Enter opens the card and Esc closes it",
+              opened_by_key and not page.evaluate("eclipse.menuOpen()"))
 
         switched = []
-        for date in ("2024-04-08", "2017-08-21", "2027-08-02"):
+        for date in ("2017-08-21", "2027-08-02"):
             page.evaluate("eclipse.select('%s')" % date)
             try:
                 page.wait_for_function(
@@ -408,16 +446,32 @@ def main():
                                  page.evaluate("Object.keys(eclipse.markers).length")))
             except Exception:
                 switched.append((date, 0, 0))
-        check("9c. picking another eclipse lazy-loads and rebuilds it",
+        check("9h. switching lazy-loads and rebuilds each eclipse",
               all(f > 10 for _, f, _ in switched),
               "; ".join(f"{d} {f} frames" for d, f, _ in switched))
-        check("9d. site markers appear only for 2027",
-              dict((d, m) for d, _, m in switched)["2024-04-08"] == 0
+        check("9i. site markers appear only for 2027",
+              dict((d, m) for d, _, m in switched)["2017-08-21"] == 0
               and dict((d, m) for d, _, m in switched)["2027-08-02"] == 9,
               "; ".join(f"{d} {m} markers" for d, _, m in switched))
-        check("9e. version badge bumped for the catalogue release",
-              page.evaluate("eclipse.version") >= 5,
+        check("9j. version bumped for the card picker",
+              page.evaluate("eclipse.version") >= 6,
               page.text_content("#version"))
+
+        # The first-visit nudge fires once per browser profile, never again.
+        fresh = browser.new_context(viewport={"width": 1280, "height": 800})
+        fp = fresh.new_page()
+        fp.goto(URL)
+        fp.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        fp.wait_for_timeout(1500)
+        first = fp.evaluate("document.getElementById('chev').classList.contains('pulse')")
+        sp = fresh.new_page()
+        sp.goto(URL)
+        sp.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        sp.wait_for_timeout(1500)
+        again = sp.evaluate("document.getElementById('chev').classList.contains('pulse')")
+        fresh.close()
+        check("9k. chevron nudges on a first visit only",
+              first and not again, f"first visit {first}, second {again}")
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

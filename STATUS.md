@@ -1,7 +1,7 @@
 # STATUS — Eclipse 2027 → kaikki täydelliset pimennykset 1986–2066
 
 Valmis ja testattu. PLAN.md:n neljä vaatimusta ja viisi hyväksymiskriteeriä
-täyttyvät, ja TASK 2–6 on toteutettu. 45 selaintarkistusta + 7 vertailua
+täyttyvät, ja TASK 2–7 on toteutettu. 51 selaintarkistusta + 7 vertailua
 julkaistuun ennusteeseen menevät läpi.
 
 ## Miten ajetaan
@@ -40,14 +40,15 @@ Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 .venv/bin/python check_oracle.py     # 7 vertailua julkaistuun ennusteeseen
 
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
-.venv/bin/python check.py            # 45 tarkistusta oikeassa selaimessa
+.venv/bin/python check.py            # 51 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
 ```
 
 ## Mitä tehty
 
 **`gen_data.py`** — laskee pimennyksen alusta asti, ainoa ulkoinen syöte on
-JPL DE440s -efemeridi (DE421 kattoi vain ~1900–2050, DE440s koko 1986–2066). Kriteeri on suunnitelman mukainen: piste on umbrassa kun
+JPL DE440s -efemeridi (DE421 kattoi vain ~1900–2050, DE440s koko
+1986–2066). Kriteeri on suunnitelman mukainen: piste on umbrassa kun
 `erotuskulma(Aurinko, Kuu) + Auringon kulmasäde < Kuun kulmasäde`, ja lisäksi
 Auringon on oltava horisontin yläpuolella (ilman tätä ehto täyttyy myös Maan
 yöpuolella). Kokonaisaika **8,9 s**:
@@ -294,6 +295,17 @@ Refaktorointi: yhden pimennyksen putki on nyt funktio `generate(date, …)`,
 ja `eclipse_core.py` sai jaetut akseligeometriat. Molemmat tarkistettiin
 ajamalla 2027 uudelleen — JSON oli tavulleen identtinen (paitsi `source`,
 joka nyt kertoo DE440s:n, kuten pitääkin).
+
+### TASK 7 — pimennysvalitsin näkyväksi (valmis)
+
+Otsikkokortti **on** nyt valitsin: koko kortti on `<button>`, jossa on ▾-nuoli,
+rivi `31 / 59 pimennystä · täydellinen` ja hover/focus-nosto; lista avautuu
+kortin alle, vanha erillinen `<select>` on poistettu. Ensikäynnillä nuoli
+sykkii 3 s (localStorage-lippu kirjataan heti kun vihje alkaa, joten sivun
+sulkeminen kesken animaation ei tuo sitä uudelleen). Enter/väli avaa,
+nuolinäppäimet selaavat listaa, Esc sulkee, klikkaus muualle sulkee. Versio 6.
+Samalla korjautui piilevä vika: napin päällä välilyönti laukaisi sekä napin
+oman toiminnon että globaalin play/pause-oikotien, jotka kumosivat toisensa.
 
 ## Validointi
 
