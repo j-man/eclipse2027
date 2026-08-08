@@ -28,7 +28,7 @@ Kartan klikkaus siirtää kellon siihen hetkeen (ks. alla).
 
 ```bash
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
-.venv/bin/python check.py            # 24 tarkistusta oikeassa selaimessa
+.venv/bin/python check.py            # 32 tarkistusta oikeassa selaimessa
 .venv/bin/python check.py --shots     # + kuvakaappaukset shots/-hakemistoon
 ```
 
@@ -45,7 +45,7 @@ yöpuolella). Kokonaisaika **8,9 s**:
 | 1 | 2,2 s | karkea haku: globaali 1° grid, 300 s askel, koko vuorokausi |
 | 2 | 4,2 s | keskilinja ja umbran ääriviivat 60 s askelin, 205 ruutua |
 | 3 | 1,1 s | kestot, vyöhykkeen reunat ja kestokäyrät |
-| 4 | 1,3 s | Malagan ja Luxorin paikalliset ajat |
+| 4 | 1,5 s | yhdeksän paikkakunnan paikalliset olosuhteet |
 
 Nopeus tulee kahdesta asiasta:
 
@@ -104,6 +104,62 @@ Rajatapaukset:
 - **Raahaus ei laukaise klikkausta** (Leafletin oma `_draggableMoved`-tarkistus);
   testattu oikealla hiiren vedolla.
 
+### TASK 3 — lisää paikkamerkit (valmis)
+
+Merkit ovat `gen_data.py`:n `MARKERS`-listassa kuten ennenkin (ei staattista
+listaa app.js:ssä), ja data on ajettu uudelleen. Yhdeksän paikkaa:
+
+| paikka | kesto | maksimi UTC | paikallinen |
+|---|---|---|---|
+| Sevilla | **ei totaliteettia** | 08:47:33 | 10:47 CEST |
+| Malaga | 1 min 55 s | 08:49:06 | 10:49 CEST |
+| Cadiz | 2 min 57 s | 08:46:53 | 10:46 CEST |
+| Gibraltar | 4 min 29 s | 08:47:48 | 10:47 CEST |
+| Tarifa | 4 min 40 s | 08:47:28 | 10:47 CEST |
+| Ceuta | 4 min 50 s | 08:47:46 | 10:47 CEST |
+| Sfax | 5 min 41 s | 09:11:39 | 10:11 CET |
+| Luxor | 6 min 23 s | 10:05:19 | 13:05 EEST |
+| Wadi Lahmy Azur Resort | 6 min 15 s | 10:13:18 | 13:13 EEST |
+
+**Sevilla jää vyöhykkeen ulkopuolelle** — 70 km pohjoisrajasta, magnitudi
+0,979. Etäisyys on tarkistettu kahdella riippumattomalla tavalla: generaattorin
+piste–jana-etäisyydellä raja­viivaan (69,6 km) ja suoralla vertailulla
+pohjoisrajan leveysasteeseen Sevillan pituuspiirillä (36,762°N vs 37,389°N =
+0,627° = 70 km). Merkki piirretään silti, mutta **onttona harmaana pisteenä**
+täytetyn keltaisen sijaan, ja popup kertoo "98 % osittainen ·
+totaliteettivyöhykkeen ulkopuolella — 70 km reunasta" ilman totaliteettirivejä.
+Muut kahdeksan ovat vyöhykkeen sisällä; testi tarkistaa jokaisen merkin
+kartalle piirrettyä vyöhykepolygonia vastaan, ei pelkkää dataa.
+
+Popupeissa on nyt myös **maksimin kellonaika** kaikille paikoille. Paikallinen
+vyöhyke mainitaan kerran alaviitteessä eikä joka rivillä, jolloin rivit mahtuvat
+yhdelle riville.
+
+Ei pysyviä tekstilappuja kartalla: nimi tulee hoverilla (`bindTooltip`),
+olosuhteet klikkauksella. Eteläisen Espanjan kuusi merkkiä ovat 200 km säteellä
+toisistaan, joten aina näkyvät nimet menisivät päällekkäin uloszoomattaessa.
+Pisteet itsessään sulautuvat maailmanzoomilla yhdeksi täpläksi — se on
+tarkoituksellista, ei tekstisotkua, ja zoomaus erottaa ne heti.
+
+Kaksi korjausta jotka tulivat tämän mukana:
+
+- **Luxor oli merkitty EET (UTC+2), nyt EEST (UTC+3).** Egypti palautti
+  kesäajan 2023, ja nykylain mukaan 2.8.2027 osuu kesäaikaan. Neljän vuoden
+  päähän ulottuva DST-oletus on aina epävarma, mutta tämä on paras arvio
+  voimassa olevien sääntöjen perusteella. Tunisia (Sfax) on UTC+1 ympäri
+  vuoden, Espanja ja Ceuta UTC+2 elokuussa.
+- **`max_obscuration` → `max_magnitude`.** Kenttä sisälsi alusta asti
+  magnitudin `(r_s + r_m − sep) / 2r_s` eli Auringon *halkaisijasta* peitetyn
+  osuuden, ei obskuraatiota (peitetty *pinta-ala*). Nimi oli väärä; arvo ei
+  muuttunut. Ei näkynyt aiemmin missään, koska kumpikaan silloisista
+  merkeistä ei ollut osittainen.
+
+### TASK 4 — versionumero nurkassa (valmis)
+
+`v4` vasemmassa alanurkassa (attribuutio on oikeassa); numero on `VERSION`-vakio
+`web/app.js`:n alussa, ja `gen_data.py` lisää lyhyen git-hashin (`v4 · 4f2a1c9`)
+jos hakemisto sattuu olemaan git-checkout — nyt ei ole, joten hash jää pois.
+
 ## Validointi
 
 | | laskettu | suunnitelman odotus |
@@ -148,7 +204,9 @@ Kestokäyrät kartalla näyttävät tämän suoraan.
   referenssikuvissa) — ne eivät olleet vaatimuksissa.
 - Klikkauspopup näyttää totaliteetin, ei osittaisen pimennyksen prosenttia
   eikä kontaktiaikoja C1/C4 — ne vaatisivat penumbran, jota ei lasketa.
-  Merkityille paikoille (Malaga, Luxor) nämä ovat popupissa.
+  Merkityille yhdeksälle paikalle nämä ovat popupissa.
+- Kesäaikaoletukset ovat neljän vuoden päässä eivätkä siksi varmoja; UTC-ajat
+  ovat aina oikein, paikallisajat riippuvat siitä pysyvätkö säännöt voimassa.
 
 ## Tiedostot
 

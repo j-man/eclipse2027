@@ -8,6 +8,7 @@ Needs playwright:  pip install playwright && playwright install chromium
 """
 
 import json
+import re
 import os
 import sys
 
@@ -18,9 +19,13 @@ URL = "file://" + os.path.join(HERE, "web", "index.html")
 
 SHOTS = {
     "overview": "",
-    "spain": "eclipse.map.setView([36.3,-4.6],7); eclipse.setTime(31700);",
+    "spain": "eclipse.map.setView([36.5,-5.4],8); eclipse.setTime(31670);",
     "malaga-popup": ("eclipse.map.setView([36.55,-4.42],9); eclipse.setTime(31745);"
                      "eclipse.markers.Malaga.openPopup();"),
+    "sevilla-popup": ("eclipse.map.setView([37.05,-5.98],8); eclipse.setTime(31620);"
+                      "eclipse.markers.Sevilla.openPopup();"),
+    "tarifa-popup": ("eclipse.map.setView([35.85,-5.6],9); eclipse.setTime(31648);"
+                     "eclipse.markers.Tarifa.openPopup();"),
     "luxor": "eclipse.map.setView([25.7,32.6],7); eclipse.setTime(36300);",
     "click-popup": ("eclipse.map.setView([26.75,31.15],7);"
                     "eclipse.map.fire('click',{latlng:L.latLng(26.55,31.45)});"),
@@ -153,6 +158,43 @@ def main():
               page.evaluate(IN_POLY, [mal["lat"], mal["lon"], "umbra"]),
               f"{mal['duration']:.0f} s of totality")
 
+        # 4c-4f. the full set of site markers
+        WANT = ["Sevilla", "Malaga", "Cadiz", "Gibraltar", "Tarifa", "Ceuta",
+                "Sfax", "Luxor", "Wadi Lahmy Azur Resort"]
+        names = [m["name"] for m in data["markers"]]
+        check("4c. all site markers present in the data", names == WANT,
+              f"{len(names)}: " + ", ".join(names))
+        check("4d. every marker is on the map",
+              page.evaluate("Object.keys(eclipse.markers).length") == len(WANT),
+              f"{page.evaluate('Object.keys(eclipse.markers).length')} markers")
+
+        # Each marker either has a totality duration or is explicitly flagged as
+        # outside the path, with a magnitude and a distance to the nearest limit.
+        classified, inside, outside = [], 0, 0
+        for m in data["markers"]:
+            if "duration" in m:
+                inside += 1
+                ok = (page.evaluate(IN_POLY, [m["lat"], m["lon"], "band"])
+                      and 0 < m["duration"] < 400 and "max_s" in m)
+            else:
+                outside += 1
+                ok = ("max_magnitude" in m and "dist_to_path_km" in m
+                      and not page.evaluate(IN_POLY, [m["lat"], m["lon"], "band"]))
+            classified.append((m["name"], ok))
+        check("4e. each marker agrees with the drawn path of totality",
+              all(ok for _, ok in classified),
+              f"{inside} inside, {outside} outside; "
+              + ", ".join(n for n, ok in classified if not ok) or "")
+
+        popups = page.evaluate(
+            "Object.entries(eclipse.markers).map(([n,mk]) =>"
+            "  [n, mk.getPopup().getContent()])")
+        bad = [n for n, html in popups
+               if "Maksimi" not in html
+               or ("totaliteettia" not in html and "ulkopuolella" not in html)]
+        check("4f. every marker popup states maximum time and totality status",
+              not bad, "missing: " + ", ".join(bad) if bad else "")
+
         # 6. click-to-time
         def click_at(lat, lon):
             page.evaluate("eclipse.map.closePopup()")
@@ -260,6 +302,43 @@ def main():
         check("6i. play resumes from the clicked time",
               page.evaluate("eclipse.isPlaying") is not None and resumed > t_click,
               f"resumed at {resumed - t_click:+d} s from the click")
+
+        # 7. version badge
+        badge = page.text_content("#version")
+        src = open(os.path.join(HERE, "web", "app.js")).read()
+        declared = re.search(r"var VERSION\s*=\s*(\d+)", src)
+        check("7a. badge shows the version declared in app.js",
+              declared is not None and badge.split(" ")[0] == "v" + declared.group(1),
+              repr(badge))
+        check("7b. badge carries the git hash only when there is one",
+              (" · " in badge) == ("git" in data["meta"]),
+              "git in data" if "git" in data["meta"] else "no git checkout")
+        check("7c. badge is non-interactive",
+              page.evaluate("getComputedStyle(document.getElementById('version'))"
+                            ".pointerEvents") == "none")
+
+        # It must not collide with the control bar, clock or attribution at any
+        # window size, so measure real bounding boxes across a range of widths.
+        RECTS = ("([a,b]) => { const r = s => { const e = document.querySelector(s);"
+                 "  if (!e) return null; const q = e.getBoundingClientRect();"
+                 "  return [q.left, q.top, q.right, q.bottom]; };"
+                 "  return [r(a), r(b)]; }")
+        collisions = []
+        for w, h in ((1440, 900), (1024, 768), (860, 700), (760, 620), (721, 600),
+                     (700, 600), (600, 560), (480, 700), (380, 640), (320, 480)):
+            page.set_viewport_size({"width": w, "height": h})
+            page.wait_for_timeout(350)
+            for other in ("#controls", "#clock", ".leaflet-control-attribution",
+                          ".leaflet-control-zoom", "#title"):
+                a, b = page.evaluate(RECTS, ["#version", other])
+                if not a or not b:
+                    continue
+                if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                    collisions.append(f"{w}x{h} vs {other}")
+        check("7d. badge never overlaps other chrome at any window size",
+              not collisions, "; ".join(collisions) or "10 window sizes clear")
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.wait_for_timeout(400)
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

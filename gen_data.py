@@ -27,6 +27,7 @@ Output:
 
 import json
 import os
+import subprocess
 import time as _time
 
 import numpy as np
@@ -48,10 +49,20 @@ DUR_LEVELS_S = [60, 120, 240, 360]   # 1m / 2m / 4m / 6m duration contours
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# name, lat, lon, utc offset (hours) on eclipse day, tz label.
+# Spain, Gibraltar and Ceuta keep CEST (UTC+2) in August; Tunisia stays on
+# CET (UTC+1) all year; Egypt reinstated summer time in 2023, so 2 August 2027
+# falls inside EEST (UTC+3) under the rules in force today.
 MARKERS = [
-    # name, lat, lon, utc offset (hours) on eclipse day, tz label
+    ("Sevilla", 37.3891, -5.9845, 2.0, "CEST"),
     ("Malaga", 36.7213, -4.4214, 2.0, "CEST"),
-    ("Luxor", 25.6872, 32.6396, 2.0, "EET"),
+    ("Cadiz", 36.5271, -6.2886, 2.0, "CEST"),
+    ("Gibraltar", 36.1408, -5.3536, 2.0, "CEST"),
+    ("Tarifa", 36.0143, -5.6044, 2.0, "CEST"),
+    ("Ceuta", 35.8894, -5.3213, 2.0, "CEST"),
+    ("Sfax", 34.7406, 10.7603, 1.0, "CET"),
+    ("Luxor", 25.6872, 32.6396, 3.0, "EEST"),
+    ("Wadi Lahmy Azur Resort", 24.2369, 35.4118, 3.0, "EEST"),
 ]
 
 t_start_wall = _time.time()
@@ -59,6 +70,29 @@ t_start_wall = _time.time()
 
 def stamp(msg):
     print(f"[{_time.time() - t_start_wall:5.1f}s] {msg}", flush=True)
+
+
+def r(x, n=3):
+    return round(float(x), n)
+
+
+def hhmmss(sec):
+    sec = int(round(sec)) % 86400
+    return f"{sec // 3600:02d}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def git_short_hash():
+    """Short commit hash, when this directory happens to be a git checkout.
+
+    Purely informational for the version badge; the page just omits the hash
+    when there is no repository.
+    """
+    try:
+        p = subprocess.run(["git", "-C", HERE, "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 # ---------------------------------------------------------------- ephemeris
@@ -437,8 +471,29 @@ def edge_cross(sec, f, i, forward):
     return float(sec[i] + (sec[j] - sec[i]) * f[i] / (f[i] - f[j]))
 
 
+def dist_to_path_km(lat, lon):
+    """Great-circle distance to the nearer edge of the path of totality.
+
+    Measured to the limit polylines as segments, not just their vertices, so a
+    site sitting between two 60 s samples is not reported tens of km too far out.
+    """
+    kx = np.cos(np.radians(lat))
+    best = np.inf
+    for line in (limit_n, limit_s):
+        a = np.array(line)
+        ay, ax = a[:-1, 0] - lat, (a[:-1, 1] - lon) * kx
+        by, bx = a[1:, 0] - lat, (a[1:, 1] - lon) * kx
+        vy, vx = by - ay, bx - ax
+        len2 = vx * vx + vy * vy
+        u = np.clip(np.where(len2 > 0, -(ax * vx + ay * vy) / np.where(len2 > 0, len2, 1),
+                             0.0), 0.0, 1.0)
+        dy, dx = ay + u * vy, ax + u * vx
+        best = min(best, float(np.hypot(dy, dx).min()))
+    return best * 111.195
+
+
 def circumstances(lat, lon):
-    """Contact times, totality duration and peak obscuration for one location."""
+    """Contact times, totality duration, peak magnitude and time of maximum."""
     sec = marker_sky.sec
     m, sep, sd, md = marker_sky.margin(lat, lon, 0, sec.size)
     m, sep, sd, md = m[0], sep[0], sd[0], md[0]
@@ -451,13 +506,26 @@ def circumstances(lat, lon):
         p = np.where(fp > 0)[0]
         out["partial_start"] = edge_cross(sec, fp, p[0], False)
         out["partial_end"] = edge_cross(sec, fp, p[-1], True)
-        out["max_obscuration"] = float(
-            np.clip((rs[p] + rm[p] - sep[p]) / (2 * rs[p]), 0, 1).max())
+        # Eclipse magnitude: the fraction of the Sun's *diameter* covered at its
+        # deepest, which is what "NN % partial" normally quotes.
+        mag = (rs[p] + rm[p] - sep[p]) / (2 * rs[p])
+        k = p[int(np.argmax(mag))]
+        out["max_magnitude"] = float(np.clip(mag.max(), 0.0, 1.0))
+        # Refine the instant of maximum with a parabola through its neighbours.
+        if 0 < k < sec.size - 1:
+            y0, y1, y2 = -sep[k - 1], -sep[k], -sep[k + 1]
+            den = y0 - 2 * y1 + y2
+            shift = 0.5 * (y0 - y2) / den if den != 0 else 0.0
+            out["max_s"] = float(sec[k] + np.clip(shift, -1, 1) * (sec[1] - sec[0]))
+        else:
+            out["max_s"] = float(sec[k])
     if (m > 0).any():
         q = np.where(m > 0)[0]
         out["total_start"] = edge_cross(sec, m, q[0], False)
         out["total_end"] = edge_cross(sec, m, q[-1], True)
         out["duration"] = out["total_end"] - out["total_start"]
+    else:
+        out["dist_to_path_km"] = round(dist_to_path_km(lat, lon), 1)
     return out
 
 
@@ -468,21 +536,15 @@ for name, lat, lon, tzoff, tzname in MARKERS:
     markers.append(c)
     if "duration" in c:
         d = int(round(c["duration"]))
-        stamp(f"{name}: totality {d // 60}m{d % 60:02d}s")
+        stamp(f"{name:24s} totality {d // 60}m{d % 60:02d}s"
+              f"  max {hhmmss(c['max_s'])} UTC")
     else:
-        stamp(f"{name}: partial only")
+        stamp(f"{name:24s} OUTSIDE the path of totality: magnitude "
+              f"{c.get('max_magnitude', 0):.3f}, {c['dist_to_path_km']:.0f} km "
+              f"from the nearest limit")
 
 
 # --------------------------------------------------------------- write output
-
-def r(x, n=3):
-    return round(float(x), n)
-
-
-def hhmmss(sec):
-    sec = int(round(sec)) % 86400
-    return f"{sec // 3600:02d}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
-
 
 payload = {
     "meta": {
@@ -494,6 +556,7 @@ payload = {
         "max_duration_at": [r(clat[imax], 4), r(clon[imax], 4), hhmmss(csec[imax])],
         "source": "computed with skyfield + JPL DE421",
     },
+    # meta.git is filled in below only when a hash is actually available.
     "path": {
         "center": [[r(clat[i], 4), r(clon[i], 4), hhmmss(csec[i]), r(centre_dur[i], 1)]
                    for i in range(len(frames))],
@@ -510,6 +573,11 @@ payload = {
               for f in frames],
     "markers": markers,
 }
+
+_hash = git_short_hash()
+if _hash:
+    payload["meta"]["git"] = _hash
+stamp(f"build stamp: {'git ' + _hash if _hash else 'no git checkout, version only'}")
 
 os.makedirs(os.path.join(HERE, "data"), exist_ok=True)
 os.makedirs(os.path.join(HERE, "web"), exist_ok=True)

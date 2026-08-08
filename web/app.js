@@ -4,6 +4,10 @@
 (function () {
   'use strict';
 
+  // Bump by hand at each milestone. 1 = first working map, 2 = click-to-time,
+  // 3 = full set of site markers, 4 = version badge.
+  var VERSION = 4;
+
   var SPEEDS = [1, 60, 300, 600];
   var MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
                 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -179,12 +183,22 @@
 
     // -- observing sites ---------------------------------------------------
 
+    // Dots only, no permanent labels: six of these sit within 200 km of each
+    // other in southern Spain and any always-on text turns to mush when zoomed
+    // out. The name appears on hover, the circumstances on click.
     var siteMarkers = {};
     (data.markers || []).forEach(function (m) {
+      var outside = !m.duration;
       siteMarkers[m.name] = L.marker([m.lat, m.lon], {
-        icon: L.divIcon({ className: 'site-dot', iconSize: [11, 11] }),
-        title: m.name
-      }).addTo(map).bindPopup(popupHtml(m), { maxWidth: 300 });
+        icon: L.divIcon({
+          className: 'site-dot' + (outside ? ' site-dot-partial' : ''),
+          iconSize: [10, 10]
+        }),
+        title: m.name,
+        riseOnHover: true
+      }).addTo(map)
+        .bindTooltip(m.name, { direction: 'top', offset: [0, -7] })
+        .bindPopup(popupHtml(m), { maxWidth: 300 });
     });
 
     // -- initial view ------------------------------------------------------
@@ -202,6 +216,10 @@
     var elTime = document.getElementById('clock-time');
     var elDate = document.getElementById('clock-date');
     var titleMax = document.getElementById('title-max');
+
+    // The hash is present only when gen_data.py ran inside a git checkout.
+    document.getElementById('version').textContent =
+      'v' + VERSION + (data.meta.git ? ' · ' + data.meta.git : '');
 
     var d = new Date(data.meta.date + 'T00:00:00Z');
     elDate.textContent = 'UTC · ' + d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()];
@@ -392,28 +410,39 @@
     var tz = m.tz_name || 'UTC';
     var rows = '';
 
+    // The zone is named once in the footer rather than on every row, which
+    // keeps each row on a single line.
     function row(label, sec) {
       if (sec === undefined) return;
       rows += '<tr><td>' + label + '</td><td>' + hms(sec) + ' UTC &nbsp;·&nbsp; ' +
-              hm(sec + off) + ' ' + tz + '</td></tr>';
+              hm(sec + off) + '</td></tr>';
     }
 
-    var head;
+    var head, note = '';
     if (m.duration) {
       head = '<div class="big">' + mmss(m.duration) + ' totaliteettia</div>';
     } else {
-      head = '<div class="big">' +
-             Math.round((m.max_obscuration || 0) * 100) + ' % osittainen</div>';
+      head = m.max_magnitude !== undefined
+        ? '<div class="big">' + Math.round(m.max_magnitude * 100) +
+          ' % osittainen</div>'
+        : '<div class="big">Ei totaliteettia</div>';
+      note = '<p class="note">Totaliteettivyöhykkeen ulkopuolella' +
+             (m.dist_to_path_km !== undefined
+               ? ' &mdash; ' + Math.round(m.dist_to_path_km) + ' km reunasta'
+               : '') + '</p>';
     }
 
     row('Osittainen alkaa', m.partial_start);
     row('Totaliteetti alkaa', m.total_start);
-    row('Totaliteetti päättyy', m.total_end);
-    row('Osittainen päättyy', m.partial_end);
+    row('Maksimi', m.max_s);
+    row('Totaliteetti loppuu', m.total_end);
+    row('Osittainen loppuu', m.partial_end);
 
-    return '<h3>' + m.name + '</h3>' + head +
+    return '<h3>' + m.name + '</h3>' + head + note +
            '<table>' + rows + '</table>' +
-           '<p class="foot">' + m.lat.toFixed(4) + '°N, ' +
-           Math.abs(m.lon).toFixed(4) + '°' + (m.lon < 0 ? 'W' : 'E') + '</p>';
+           '<p class="foot">' + Math.abs(m.lat).toFixed(4) + '°' +
+           (m.lat < 0 ? 'S' : 'N') + ', ' +
+           Math.abs(m.lon).toFixed(4) + '°' + (m.lon < 0 ? 'W' : 'E') +
+           ' &nbsp;·&nbsp; paikallinen aika ' + tz + '</p>';
   }
 })();
