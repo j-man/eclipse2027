@@ -484,10 +484,42 @@ body.playing #play .ico-pause { display: block; }
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
-/* Each half of a "local — UTC" pair holds together; a popup too narrow for
-   both breaks between them, never inside a time. */
-.leaflet-popup-content .loc { white-space: nowrap; }
-.leaflet-popup-content .utc { white-space: nowrap; opacity: 0.62; }
+/* Three clocks, one column each. The zone labels live in the header so the
+   columns of times stay narrow, and the place column keeps full contrast:
+   it is the one a traveller reads. */
+.leaflet-popup-content table.times td {
+  padding: 2px 0 2px 11px;
+  text-align: right;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.leaflet-popup-content table.times td:first-child {
+  padding: 2px 0;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink-dim);
+}
+.leaflet-popup-content table.times .head td {
+  font: 600 9px/1.35 inherit;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  padding-bottom: 3px;
+  vertical-align: bottom;
+}
+/* The offset sits under its own heading, on its own line. */
+.leaflet-popup-content table.times .head span {
+  display: block;
+  min-height: 1em;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  text-transform: none;
+  color: var(--ink);
+}
+.leaflet-popup-content .times .loc { color: var(--ink); }
+.leaflet-popup-content .times .you,
+.leaflet-popup-content .times .utc { opacity: 0.62; }
 .leaflet-popup-content .dshift { color: #ffd24a; }
 
 .click-popup .leaflet-popup-content { margin: 10px 13px; }
@@ -516,4 +548,19 @@ body.playing #play .ico-pause { display: block; }
   #slider { width: 34vw; }
   #clock { padding: 5px 11px; }
   #clock-time { font-size: 17px; letter-spacing: 1px; }
+  /* Three columns of times have to fit a phone, so they tighten and the event
+     labels are allowed to wrap - the times themselves never do. */
+  .leaflet-popup-content { margin: 10px 12px; font-size: 11.5px; }
+  .leaflet-popup-content table.times td { padding-left: 7px; font-size: 11px; }
+  .leaflet-popup-content table.times td:first-child {
+    padding-right: 2px;
+    white-space: normal;
+  }
+  /* The headings are wider than the times they label, so they set the column
+     widths; on a phone they wrap instead. */
+  .leaflet-popup-content table.times .head td {
+    white-space: normal;
+    font-size: 8.5px;
+    letter-spacing: 0.3px;
+  }
 }

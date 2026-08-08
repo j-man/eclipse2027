@@ -89,7 +89,12 @@ def main():
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        # The viewer's own zone is part of what the page shows now, so it is
+        # pinned rather than inherited from whatever machine runs the tests.
+        # Helsinki is an hour off both Spain and Egypt on the eclipse dates,
+        # which is what makes the viewer column visible and checkable.
+        page = browser.new_page(viewport={"width": 1440, "height": 900},
+                                timezone_id="Europe/Helsinki")
         problems = []
         page.on("pageerror", lambda e: problems.append("pageerror: " + str(e)))
         page.on("console", lambda m: problems.append("console " + m.type + ": " + m.text)
@@ -692,11 +697,15 @@ def main():
               and secs(loc) - secs(utc) == 7200,
               f"{loc} (UTC+2) — {utc} UTC")
         pop = page.query_selector(".click-popup")
-        txt = pop.inner_text() if pop else ""
-        check("10h. the popup gives local time first and UTC second",
-              re.search(r"\d\d:\d\d:\d\d \(UTC\+2\)\s+—\s+\d\d:\d\d:\d\d UTC", txt)
-              is not None and "Europe/Madrid" in txt,
-              txt.replace("\n", " | ")[:78])
+        txt = " ".join((pop.inner_text() if pop else "").split())
+        # Place, viewer, UTC in that order; the place column is CEST, so it runs
+        # two hours ahead of the UTC column on the same row.
+        got = re.search(r"MAKSIMI (\d\d:\d\d:\d\d) (\d\d:\d\d:\d\d) "
+                        r"(\d\d:\d\d:\d\d)", txt, re.I)
+        check("10h. the popup leads with local time and names the zone",
+              got is not None and "UTC+2" in txt and "Europe/Madrid" in txt
+              and secs(got.group(1)) - secs(got.group(3)) == 7200,
+              txt[:96])
 
         # Off the coast of Africa there is no zone to name, so the offset comes
         # from the longitude and must wear a tilde.
@@ -730,17 +739,114 @@ def main():
         before = clock_seconds()
         page.evaluate("eclipse.markers.Luxor.openPopup()")
         page.wait_for_timeout(400)
-        shown = page.query_selector(".leaflet-popup-content").inner_text()
-        want = (f"{hms(luxor['max_s'] + 10800)} (UTC+3) "
-                f"— {hms(luxor['max_s'])} UTC")
+        shown = " ".join(
+            page.query_selector(".leaflet-popup-content").inner_text().split())
+        # Egypt and the pinned viewer zone are both +3 on this date, so the
+        # viewer column is dropped and the row is just place and UTC.
+        want = f"{hms(luxor['max_s'] + 10800)} {hms(luxor['max_s'])}"
         check("10l. displayed times are the stored UTC seconds, shifted to show",
-              want in " ".join(shown.split()), want)
+              want in shown and "UTC+3" in shown
+              and "SINUN" not in shown.upper(), want)
         check("10m. opening a site retunes the clock without moving the timeline",
               page.text_content("#clock-zone") == "UTC+3"
               and clock_seconds() == before
               and "Africa/Cairo" in (page.get_attribute("#clock", "title") or ""),
               page.text_content("#clock-time") + " UTC+3, timeline still at "
               + page.text_content("#clock-utc"))
+
+        # 11. three clocks: the place, the viewer, UTC
+        #
+        # The viewer's zone comes from the browser, so it is forced here rather
+        # than assumed. A Finn planning the Tarifa trip is the case in the task:
+        # place 11:07 (+2), sinun aikasi 12:07 (+3), UTC 09:07.
+        hctx = browser.new_context(viewport={"width": 1280, "height": 900},
+                                   timezone_id="Europe/Helsinki")
+        hp = hctx.new_page()
+        hp.goto(URL)
+        hp.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        hp.evaluate("eclipse.select('2027-08-02')")
+        hp.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                             timeout=15000)
+        hp.wait_for_timeout(1200)
+        hp.evaluate("eclipse.map.setView([35.9,-5.6],9)")
+        hp.wait_for_timeout(600)
+        hp.evaluate("eclipse.markers.Tarifa.openPopup()")
+        hp.wait_for_timeout(400)
+        tar = " ".join(
+            hp.query_selector(".leaflet-popup-content").inner_text().split())
+
+        head = re.search(r"PAIKALLINEN (UTC[+−]\S+) SINUN AIKASI (UTC[+−]\S+) UTC",
+                         tar, re.I)
+        check("11a. three clocks are headed place, viewer, UTC, with offsets",
+              head is not None and head.group(1) == "UTC+2"
+              and head.group(2) == "UTC+3", tar[:70])
+
+        got = re.search(r"MAKSIMI (\d\d:\d\d:\d\d) (\d\d:\d\d:\d\d) "
+                        r"(\d\d:\d\d:\d\d)", tar, re.I)
+        check("11b. Tarifa: place +2, viewer +3, UTC, in that order",
+              got is not None
+              and got.group(1) == hms(tarifa["max_s"] + 7200)
+              and got.group(2) == hms(tarifa["max_s"] + 10800)
+              and got.group(3) == hms(tarifa["max_s"]),
+              " / ".join(got.groups()) if got else "no row parsed")
+
+        rows = hp.evaluate(
+            "[...document.querySelectorAll('.leaflet-popup-content .times tr')]"
+            ".map(r => r.children.length)")
+        check("11c. every event keeps all three clocks on one line",
+              len(rows) == 6 and set(rows) == {4},
+              f"{len(rows)} rows of {sorted(set(rows))} cells")
+        check("11d. the viewer's zone is named, and it is the browser's own",
+              "Europe/Helsinki" in tar
+              and hp.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone")
+              == "Europe/Helsinki",
+              tar[-58:])
+
+        # A viewer already on the place's offset would be shown the same numbers
+        # twice, so that column goes away.
+        cctx = browser.new_context(viewport={"width": 1280, "height": 900},
+                                   timezone_id="Africa/Cairo")
+        cp = cctx.new_page()
+        cp.goto(URL)
+        cp.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        cp.evaluate("eclipse.select('2027-08-02')")
+        cp.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                             timeout=15000)
+        cp.wait_for_timeout(1200)
+        cp.evaluate("eclipse.map.setView([25.7,32.6],8)")
+        cp.wait_for_timeout(600)
+        cp.evaluate("eclipse.markers.Luxor.openPopup()")
+        cp.wait_for_timeout(400)
+        lux = " ".join(
+            cp.query_selector(".leaflet-popup-content").inner_text().split())
+        cells = cp.evaluate(
+            "[...document.querySelectorAll('.leaflet-popup-content .times tr')]"
+            ".map(r => r.children.length)")
+        check("11e. a viewer on the place's own offset gets no duplicate column",
+              "SINUN" not in lux.upper() and set(cells) == {3}
+              and f"{hms(luxor['max_s'] + 10800)} {hms(luxor['max_s'])}" in lux,
+              lux[:70])
+
+        # Same three clocks for a clicked point, not just for the marked sites.
+        hp.evaluate("eclipse.map.closePopup(); eclipse.map.setView([36.20,-5.85],8)")
+        hp.wait_for_timeout(700)
+        xy = hp.evaluate("([a,b]) => { const p ="
+                         " eclipse.map.latLngToContainerPoint(L.latLng(a,b));"
+                         " return [p.x, p.y]; }", [36.20, -5.85])
+        hp.mouse.click(xy[0], xy[1])
+        hp.wait_for_timeout(500)
+        clicked = " ".join(
+            hp.query_selector(".click-popup").inner_text().split())
+        crow = re.search(r"MAKSIMI (\d\d:\d\d:\d\d) (\d\d:\d\d:\d\d) "
+                         r"(\d\d:\d\d:\d\d)", clicked, re.I)
+        check("11f. a clicked point gets the same three clocks",
+              crow is not None
+              and secs(crow.group(1)) - secs(crow.group(3)) == 7200
+              and secs(crow.group(2)) - secs(crow.group(3)) == 10800
+              and "SINUN AIKASI" in clicked.upper(),
+              clicked[:80])
+        hctx.close()
+        cctx.close()
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

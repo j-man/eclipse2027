@@ -513,6 +513,17 @@
     return { zone: zone || null, lon: lon === undefined ? 0 : lon };
   }
 
+  // Where the browser thinks it is. No box lookup and no guessing: either Intl
+  // names the viewer's zone or there is no viewer clock to show.
+  function viewer() {
+    var z = null;
+    try {
+      z = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+      if (z && formatter(z) === null) z = null;
+    } catch (err) { z = null; }
+    return { zone: z, lon: 0 };
+  }
+
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
   function label(sec, exact) {
@@ -547,6 +558,6 @@
     };
   }
 
-  window.TZ = { at: at, named: named, zoneAt: zoneAt, stamp: stamp,
-                offsetSec: offsetSec, boxes: BOXES };
+  window.TZ = { at: at, named: named, viewer: viewer, zoneAt: zoneAt,
+                stamp: stamp, offsetSec: offsetSec, boxes: BOXES };
 })();

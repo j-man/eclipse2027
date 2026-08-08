@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 10;
+  var VERSION = 11;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -84,29 +84,46 @@
            Math.abs(st.dayShift) + ' pv</span>';
   }
 
-  // "11:07:41 (UTC+2) — 09:07:41 UTC". Local first: that is the number a
-  // traveller sets an alarm by. UTC stays visible so the two can be reconciled.
-  function pairHtml(pl, sec) {
-    var st = TZ.stamp(pl, instant(sec));
-    return '<span class="loc">' + hms(st.localSec) + ' (' + st.label + ')' +
-           dayTag(st) + '</span><span class="utc"> &mdash; ' + hms(sec) +
-           ' UTC</span>';
-  }
+  // Three clocks for every event: the place's, the viewer's own, and UTC. One
+  // row per event and one column per clock, with the zones named once in the
+  // header - repeating "(UTC+2)" on five rows is five times the ink for one
+  // fact, and it is the column of place times that has to stay readable.
+  //
+  // The viewer's zone comes from the browser itself, not from the box table:
+  // Intl already knows where this browser thinks it is.
+  function timesTable(pl, rows) {
+    var here = TZ.viewer();
+    var place0 = TZ.stamp(pl, instant(rows[0][1]));
+    var here0 = here.zone ? TZ.stamp(here, instant(rows[0][1])) : null;
+    // A viewer on the same offset as the place would read the same numbers
+    // twice, so that column is dropped rather than duplicated.
+    var showYou = here0 !== null && here0.offset !== place0.offset;
 
-  function rangeHtml(pl, a, b) {
-    var sa = TZ.stamp(pl, instant(a)), sb = TZ.stamp(pl, instant(b));
-    return '<span class="loc">' + hms(sa.localSec) + ' &ndash; ' +
-           hms(sb.localSec) + ' (' + sa.label + ')' + dayTag(sa) +
-           '</span><span class="utc"> &mdash; ' + hms(a) + ' &ndash; ' +
-           hms(b) + ' UTC</span>';
+    var html = '<table class="times"><tr class="head"><td></td>' +
+               '<td>paikallinen<span>' + place0.label + '</span></td>' +
+               (showYou ? '<td>sinun aikasi<span>' + here0.label + '</span></td>'
+                        : '') +
+               '<td>UTC<span></span></td></tr>';
+    rows.forEach(function (r) {
+      var st = TZ.stamp(pl, instant(r[1]));
+      html += '<tr><td>' + r[0] + '</td>' +
+              '<td class="loc">' + hms(st.localSec) + dayTag(st) + '</td>';
+      if (showYou) {
+        var y = TZ.stamp(here, instant(r[1]));
+        html += '<td class="you">' + hms(y.localSec) + dayTag(y) + '</td>';
+      }
+      html += '<td class="utc">' + hms(r[1]) + '</td></tr>';
+    });
+    return { html: html + '</table>', you: showYou ? here0 : null };
   }
 
   // An offset from a named zone is a fact; one from longitude/15 is a guess and
   // says so, here and in the tilde on the label itself.
-  function zoneFoot(st) {
-    return st.exact
+  function zoneFoot(st, you) {
+    return (st.exact
       ? 'paikallinen aika ' + st.zone + (st.abbr ? ' (' + st.abbr + ')' : '')
-      : 'paikallisaika arvioitu pituuspiiristä (' + st.label + ')';
+      : 'paikallisaika arvioitu pituuspiiristä (' + st.label + ')') +
+      (you ? ' &nbsp;·&nbsp; sinun aikasi ' + you.zone : '');
   }
 
   // Paths that cross the antimeridian are stored as continuous longitudes, so a
@@ -287,8 +304,8 @@
         }),
         title: m.name, riseOnHover: true
       }).bindTooltip(m.name, { direction: 'top', offset: [0, -7] })
-        // Wide enough that a local time and its UTC counterpart share one line.
-        .bindPopup(popupHtml(m), { maxWidth: 360 })
+        // Wide enough for three clocks side by side without wrapping a column.
+        .bindPopup(popupHtml(m), { maxWidth: popupMax() })
         // Opening a site hands its zone to the header clock. The time itself is
         // deliberately left alone: a marker click is a request to read, not to
         // move the timeline.
@@ -523,16 +540,21 @@
 
   // -- popups --------------------------------------------------------------
 
+  // Three clocks need room, but not more room than the window has: on a phone
+  // the popup is capped to the viewport and the table tightens up in CSS.
+  function popupMax() {
+    // The wrapper adds its own padding and border around this, so the window
+    // budget has to be spent with a margin to spare.
+    return Math.max(230, Math.min(430, window.innerWidth - 46));
+  }
+
   function popupHtml(m) {
     // Marked sites carry their own IANA zone, so nothing is looked up here.
     var pl = TZ.named(m.tz, m.lon);
-    var rows = '';
+    var rows = [];
 
-    // The zone is named once in the footer rather than on every row; each row
-    // carries the offset, which is the part that removes the ambiguity.
     function row(label, sec) {
-      if (sec === undefined) return;
-      rows += '<tr><td>' + label + '</td><td>' + pairHtml(pl, sec) + '</td></tr>';
+      if (sec !== undefined) rows.push([label, sec]);
     }
 
     var head, note = '';
@@ -554,12 +576,13 @@
     row('Totaliteetti loppuu', m.total_end);
     row('Osittainen loppuu', m.partial_end);
 
-    return '<h3>' + m.name + '</h3>' + head + note +
-           '<table>' + rows + '</table>' +
+    var t = timesTable(pl, rows);
+    return '<h3>' + m.name + '</h3>' + head + note + t.html +
            '<p class="foot">' + Math.abs(m.lat).toFixed(4) + '°' +
            (m.lat < 0 ? 'S' : 'N') + ', ' +
            Math.abs(m.lon).toFixed(4) + '°' + (m.lon < 0 ? 'W' : 'E') +
-           ' &nbsp;·&nbsp; ' + zoneFoot(TZ.stamp(pl, instant(m.max_s))) + '</p>';
+           ' &nbsp;·&nbsp; ' +
+           zoneFoot(TZ.stamp(pl, instant(m.max_s)), t.you) + '</p>';
   }
 
   // -- start up ------------------------------------------------------------
@@ -610,7 +633,8 @@
     map.createPane('umbra');
     map.getPane('umbra').style.zIndex = 450;
 
-    clickPopup = L.popup({ maxWidth: 330, className: 'click-popup', autoPan: false });
+    clickPopup = L.popup({ maxWidth: popupMax(), className: 'click-popup',
+                           autoPan: false });
 
     buildMenu();
     el.card.onclick = function () { menuOpen ? closeMenu() : openMenu(); };
@@ -657,16 +681,17 @@
         // duration would be an undercount. Show only what is certain.
         ? '<div class="big">totaliteetti</div>'
         : '<div class="big">' + mmss(tot.duration) + '</div>';
-      html += '<table><tr><td>Maksimi</td><td>' + pairHtml(pl, tot.max) +
-              '</td></tr>';
-      if (!tot.clipped) {
-        html += '<tr><td>Kesto</td><td>' +
-                rangeHtml(pl, tot.start, tot.end) + '</td></tr>';
-      }
-      html += '</table><p class="foot">' + Math.abs(lat).toFixed(3) + '°' +
+      // Start and end as their own rows rather than a range in one cell: three
+      // clocks wide, a range would not fit on a line.
+      var rows = tot.clipped ? [['Maksimi', tot.max]]
+                             : [['Alkaa', tot.start], ['Maksimi', tot.max],
+                                ['Loppuu', tot.end]];
+      var t = timesTable(pl, rows);
+      clickPopup.options.maxWidth = popupMax();
+      html += t.html + '<p class="foot">' + Math.abs(lat).toFixed(3) + '°' +
               (lat < 0 ? 'S' : 'N') + ', ' + Math.abs(lon).toFixed(3) + '°' +
               (lon < 0 ? 'W' : 'E') + ' &nbsp;·&nbsp; ' +
-              zoneFoot(TZ.stamp(pl, instant(tot.max))) + '</p>';
+              zoneFoot(TZ.stamp(pl, instant(tot.max)), t.you) + '</p>';
       clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
     });
 
