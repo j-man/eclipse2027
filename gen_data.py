@@ -44,6 +44,7 @@ from skyfield.api import wgs84
 from eclipse_core import (R_EARTH_KM, R_MOON_KM, R_SUN_KM, SkyTable, classify,
                           geodetic, local_circumstances, sun_moon_geocentric,
                           ts, umbra_margin)
+from skyfield.framelib import itrs
 # The page's default eclipse is defined once, next to the catalogue it ships in.
 from find_eclipses import DEFAULT_ECLIPSE, write_index_js
 
@@ -57,6 +58,8 @@ FINE_STEP_S = 60.0           # phase 2: umbra outline / centre line cadence
 
 N_AZIMUTH = 60               # vertices per umbra outline
 DUR_LEVELS_S = [60, 120, 240, 360]   # 1m / 2m / 4m / 6m duration contours
+LOCAL_STEP_S = 60.0          # phase 4: sun/moon cadence for local circumstances
+LOCAL_PAD_S = 9000.0         # ...2.5 h either side of the umbra's transit
 
 DUR_WIN_S = 420.0            # totality never exceeds ~7.5 minutes
 DUR_STEP_S = 5.0
@@ -513,6 +516,29 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
                     f"{c.get('max_magnitude', 0):.3f}, "
                     f"{c['dist_to_path_km']:.0f} km from the nearest limit")
 
+    # --- phase 4: Sun and Moon for local circumstances anywhere -------------
+    #
+    # 2.5 h either side of the umbra's transit covers the partial phase for
+    # every observer who sees any of it: first and last contact worldwide are
+    # inside that window for any central eclipse.
+    say("  phase 4: sun and moon in the Earth-fixed frame")
+    lc_sec = np.arange(frames[0]["s"] - LOCAL_PAD_S,
+                       frames[-1]["s"] + LOCAL_PAD_S + LOCAL_STEP_S, LOCAL_STEP_S)
+    lc_t = ts.tt_jd(t_midnight.tt + lc_sec / 86400.0)
+    lc_sg, lc_mg = sun_moon_geocentric(lc_t)
+    lc_rot = itrs.rotation_at(lc_t)                      # (3, 3, n): ITRS -> GCRS
+    # ...so contracting over the GCRS index takes a vector the other way.
+    lc_sun = np.einsum("jci,ci->ji", lc_rot, lc_sg)
+    lc_moon = np.einsum("jci,ci->ji", lc_rot, lc_mg)
+    local_block = {
+        "t0_s": r(float(lc_sec[0]), 0),
+        "step_s": r(LOCAL_STEP_S, 0),
+        "sun": [[r(v, 0) for v in lc_sun[:, i]] for i in range(lc_sec.size)],
+        "moon": [[r(v, 2) for v in lc_moon[:, i]] for i in range(lc_sec.size)],
+        "r_sun_km": R_SUN_KM,
+        "r_moon_km": R_MOON_KM,
+    }
+
     payload = {
         "meta": {
             "date": date,
@@ -538,6 +564,12 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
                             for a, b in zip(f["outline_lat"], f["outline_lon"])]}
                   for i, f in enumerate(frames)],
         "markers": site_data,
+        # Sun and Moon in the Earth-fixed frame, once a minute across the whole
+        # partial phase. The path arrays only cover the umbra's transit, so a
+        # click far from it had nothing to work with; from these two vectors a
+        # browser can work out local circumstances for any point on Earth with
+        # the same geometry eclipse_core uses.
+        "local": local_block,
     }
     h = git_short_hash()
     if h:

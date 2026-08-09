@@ -301,14 +301,20 @@ def main():
         check("6d. clicked duration matches the computed value",
               worst[0] < 5, f"worst {worst[0]:.1f} s ({worst[1]})")
 
-        # Cairo is well north of the path: time only, no popup.
+        # Cairo is well north of the 2027 path: no totality, but a large
+        # partial eclipse, which is what the click must now report. (Before,
+        # a click outside the path moved the clock and said nothing, which is
+        # exactly the complaint this behaviour answers.)
         page.evaluate("eclipse.map.setView([28,31],5)")
         page.wait_for_timeout(800)
         before = clock_seconds()
         click_at(30.04, 31.24)
-        check("6e. click outside the path sets time but shows no popup",
-              page.query_selector(".click-popup") is None and clock_seconds() != before,
-              "clock " + page.text_content("#clock-time"))
+        cairo = page.query_selector(".click-popup")
+        cairo_text = " ".join(cairo.inner_text().split()) if cairo else ""
+        check("6e. a click outside the path sets the time and reports the partial",
+              cairo is not None and clock_seconds() != before
+              and "OSITTAINEN" in cairo_text.upper() and "%" in cairo_text,
+              (cairo_text[:80] or "no popup") + " · clock " + page.text_content("#clock-time"))
 
         # Dragging the map must not be treated as a click.
         page.evaluate("eclipse.map.closePopup()")
@@ -847,6 +853,96 @@ def main():
               clicked[:80])
         hctx.close()
         cctx.close()
+
+        # 12. local circumstances for any clicked point, not just inside the path
+        #
+        # The reference numbers below were not taken on trust: they are
+        # recomputed here from JPL DE440s through eclipse_core (the same route
+        # gen_data uses) and cross-checked against a second, independent
+        # calculation straight from skyfield's apparent topocentric positions —
+        # separation of the two centres against their apparent radii. Both
+        # agree to better than 0.001 in magnitude and a second in time. No
+        # published table was consulted: this machine has no network. The
+        # agreed values for Helsinki (60.17N, 24.94E) on 2026-08-12 are
+        # magnitude 0.8331 at 17:52:42 UTC, and the Sun is 2.4 degrees high at
+        # that moment — it sets while the eclipse is still running.
+        import numpy as np
+        from eclipse_core import R_MOON_KM, R_SUN_KM, SkyTable, eph, local_circumstances
+        from eclipse_core import ts as ec_ts
+        from skyfield.api import wgs84 as ec_wgs84
+
+        HELSINKI = (60.17, 24.94)
+        t0 = ec_ts.utc(2026, 8, 12, 0, 0, 0)
+        sky = SkyTable(t0, np.arange(14 * 3600, 21 * 3600, 10.0))
+        truth = local_circumstances(sky, *HELSINKI)
+
+        # ...and the same quantity the other way round, from apparent positions.
+        here = eph["earth"] + ec_wgs84.latlon(*HELSINKI)
+        tmax = ec_ts.utc(2026, 8, 12, 0, 0, truth["max_s"])
+        seen = here.at(tmax)
+        sun_v = seen.observe(eph["sun"]).apparent()
+        moon_v = seen.observe(eph["moon"]).apparent()
+        sep = sun_v.separation_from(moon_v).radians
+        rs = np.arcsin(R_SUN_KM / sun_v.distance().km)
+        rm = np.arcsin(R_MOON_KM / moon_v.distance().km)
+        mag2 = float((rs + rm - sep) / (2 * rs))
+        alt = float(sun_v.altaz()[0].degrees)
+
+        check("12a. the two independent calculations agree on Helsinki",
+              abs(truth["max_magnitude"] - mag2) < 0.001,
+              "core %.4f vs apparent %.4f at %s"
+              % (truth["max_magnitude"], mag2, hms(truth["max_s"])))
+        check("12b. Helsinki sees a deep partial eclipse on 2026-08-12",
+              abs(truth["max_magnitude"] - 0.833) < 0.005
+              and abs(truth["max_s"] - (17 * 3600 + 52 * 60 + 42)) < 60,
+              "magnitude %.4f, max %s UTC" % (truth["max_magnitude"], hms(truth["max_s"])))
+        check("12c. and the Sun is low enough to set during it",
+              0 < alt < 5, "%.2f deg at maximum" % alt)
+
+        # The page must reach the same answer, in the browser, from the data
+        # file alone.
+        page.evaluate("eclipse.select('2026-08-12')")
+        page.wait_for_function("eclipse.data.meta.date === '2026-08-12'", timeout=15000)
+        page.wait_for_timeout(800)
+        js = page.evaluate("eclipse.circumstancesAt(60.17, 24.94)")
+        check("12d. the page computes local circumstances outside the path",
+              js is not None and js.get("visible") is True,
+              str(js)[:90])
+        check("12e. and gets the same magnitude as the ephemeris",
+              js and abs(js["magnitude"] - truth["max_magnitude"]) < 0.01,
+              "page %.4f vs %.4f" % (js["magnitude"], truth["max_magnitude"]) if js else "none")
+        check("12f. and the same time of maximum, to the minute",
+              js and abs(js["max"] - truth["max_s"]) < 60,
+              "page %s vs %s" % (hms(js["max"]), hms(truth["max_s"])) if js else "none")
+        check("12g. obscuration is reported as well as magnitude",
+              js and 0.70 < js["obscuration"] < js["magnitude"],
+              "%.3f of the disc" % js["obscuration"] if js else "none")
+        check("12h. the Sun setting mid-eclipse is called out",
+              js and js.get("cutByHorizon") is True,
+              "cut by horizon: %s" % (js.get("cutByHorizon") if js else "none"))
+
+        # A point that sees nothing at all must say so rather than stay silent.
+        far = page.evaluate("eclipse.circumstancesAt(-33.87, 151.21)")   # Sydney
+        check("12i. a point the eclipse never reaches says so",
+              far is not None and far.get("visible") is False,
+              str(far))
+
+        # And the popup itself, clicked on the map.
+        page.evaluate("eclipse.map.closePopup(); eclipse.map.setView([60.17,24.94],6)")
+        page.wait_for_timeout(700)
+        hxy = page.evaluate("([a,b]) => { const p ="
+                            " eclipse.map.latLngToContainerPoint(L.latLng(a,b));"
+                            " return [p.x, p.y]; }", [60.17, 24.94])
+        page.mouse.click(hxy[0], hxy[1])
+        page.wait_for_timeout(600)
+        pop = page.query_selector(".click-popup")
+        text = " ".join(pop.inner_text().split()) if pop else ""
+        check("12j. clicking Finland opens a popup that answers the question",
+              "OSITTAINEN" in text.upper() and "%" in text
+              and re.search(r"MAKSIMI \d\d:\d\d:\d\d", text, re.I) is not None,
+              text[:100])
+        check("12k. and it names the sunset",
+              "AURINKO LASKEE" in text.upper(), text[:100])
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

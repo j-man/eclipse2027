@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 11;
+  var VERSION = 12;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -234,6 +234,116 @@
     var clipped = (first === 0) || (last_ === frames.length - 1);
     return { start: t_in, end: t_out, duration: t_out - t_in,
              max: (t_in + t_out) / 2, clipped: clipped };
+  }
+
+  // -- local circumstances anywhere ----------------------------------------
+  //
+  // The path arrays only describe the umbra, so a click away from it had
+  // nothing to answer with. data.local carries the Sun and the Moon in the
+  // Earth-fixed frame once a minute across the whole partial phase; from those
+  // two vectors the geometry for any point is the same three lines the
+  // generator uses: separation against the two angular radii, with the Sun
+  // required to be above the horizon.
+
+  var WGS84_A = 6378.137, WGS84_F = 1 / 298.257223563;
+
+  function observerXYZ(lat, lon) {
+    var e2 = 2 * WGS84_F - WGS84_F * WGS84_F;
+    var la = lat * Math.PI / 180, lo = lon * Math.PI / 180;
+    var sinLa = Math.sin(la), cosLa = Math.cos(la);
+    var n = WGS84_A / Math.sqrt(1 - e2 * sinLa * sinLa);
+    return [n * cosLa * Math.cos(lo), n * cosLa * Math.sin(lo), n * (1 - e2) * sinLa];
+  }
+
+  function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+  function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function norm(a) { return Math.sqrt(dot(a, a)); }
+
+  // How much of the Sun's disc the Moon covers: the area of the lens between
+  // two circles, over the Sun's area. Magnitude is the fraction of the
+  // *diameter* and is what "83 %" usually means in a forecast; obscuration is
+  // the fraction of the *area*, which is what the light actually does.
+  function obscuration(rs, rm, d) {
+    if (d >= rs + rm) return 0;
+    if (d <= Math.abs(rs - rm)) return rm >= rs ? 1 : (rm * rm) / (rs * rs);
+    var c1 = (d * d + rs * rs - rm * rm) / (2 * d * rs);
+    var c2 = (d * d + rm * rm - rs * rs) / (2 * d * rm);
+    var area = rs * rs * Math.acos(Math.min(1, Math.max(-1, c1))) +
+               rm * rm * Math.acos(Math.min(1, Math.max(-1, c2))) -
+               0.5 * Math.sqrt(Math.max(0, (-d + rs + rm) * (d + rs - rm) *
+                                           (d - rs + rm) * (d + rs + rm)));
+    return area / (Math.PI * rs * rs);
+  }
+
+  // The state of the eclipse at one instant, for one observer.
+  function sampleAt(local, p, up, i) {
+    var sv = sub(local.sun[i], p), mv = sub(local.moon[i], p);
+    var sd = norm(sv), md = norm(mv);
+    var sep = Math.acos(Math.min(1, Math.max(-1, dot(sv, mv) / (sd * md))));
+    var rs = Math.asin(local.r_sun_km / sd), rm = Math.asin(local.r_moon_km / md);
+    return {
+      s: local.t0_s + i * local.step_s,
+      f: rs + rm - sep,                       // > 0 while any of the Sun is hidden
+      mag: (rs + rm - sep) / (2 * rs),
+      obsc: obscuration(rs, rm, sep),
+      alt: Math.asin(dot(up, sv) / sd) * 180 / Math.PI,
+      total: rm - rs - sep > 0
+    };
+  }
+
+  // Linear crossing of f = 0 between two samples, which is where a contact is.
+  function contactBetween(a, b) {
+    if (a.f === b.f) return a.s;
+    return a.s + (b.s - a.s) * (0 - a.f) / (b.f - a.f);
+  }
+
+  function circumstancesAt(lat, lon) {
+    var local = data && data.local;
+    if (!local || !local.sun || !local.sun.length) return null;
+    var p = observerXYZ(lat, lon);
+    var up = [p[0] / norm(p), p[1] / norm(p), p[2] / norm(p)];
+
+    var best = null, first = -1, last_ = -1, firstUp = -1, lastUp = -1;
+    var prev = null, c1 = null, c4 = null;
+    var everUp = false, everCovered = false;
+    for (var i = 0; i < local.sun.length; i++) {
+      var now_ = sampleAt(local, p, up, i);
+      if (now_.f > 0) {
+        everCovered = true;
+        if (first < 0) first = i;
+        last_ = i;
+        if (prev && prev.f <= 0) c1 = contactBetween(prev, now_);
+        if (now_.alt > 0) {
+          everUp = true;
+          if (firstUp < 0) firstUp = i;
+          lastUp = i;
+          if (!best || now_.mag > best.mag) best = now_;
+        }
+      } else if (prev && prev.f > 0 && c4 === null) {
+        c4 = contactBetween(prev, now_);
+      }
+      prev = now_;
+    }
+    if (!everCovered) return { visible: false, anywhere: false };
+    if (!everUp) return { visible: false, anywhere: true };  // it happens, below the horizon
+
+    // What the observer actually sees: the eclipse, clipped by the horizon.
+    var startS = firstUp === first && c1 !== null ? c1 : local.t0_s + firstUp * local.step_s;
+    var endS = lastUp === last_ && c4 !== null ? c4 : local.t0_s + lastUp * local.step_s;
+    return {
+      visible: true,
+      anywhere: true,
+      start: startS,
+      max: best.s,
+      end: endS,
+      magnitude: Math.min(1, best.mag),
+      obscuration: Math.min(1, best.obsc),
+      total: best.total,
+      altMax: best.alt,
+      // the horizon, not the geometry, ended (or began) it
+      cutByHorizon: lastUp !== last_,
+      startedBelow: firstUp !== first
+    };
   }
 
   // -- rendering -----------------------------------------------------------
@@ -674,24 +784,60 @@
       setTime(closestApproach(lat, lon));
 
       var tot = totalityAt(lat, lon);
-      if (!tot) { map.closePopup(clickPopup); return; }
+      var loc = circumstancesAt(lat, lon);
+      var html, rows, stampSec;
 
-      var html = tot.clipped
-        // The shadow reaches this point outside the computed window, so the
-        // duration would be an undercount. Show only what is certain.
-        ? '<div class="big">totaliteetti</div>'
-        : '<div class="big">' + mmss(tot.duration) + '</div>';
-      // Start and end as their own rows rather than a range in one cell: three
-      // clocks wide, a range would not fit on a line.
-      var rows = tot.clipped ? [['Maksimi', tot.max]]
-                             : [['Alkaa', tot.start], ['Maksimi', tot.max],
-                                ['Loppuu', tot.end]];
-      var t = timesTable(pl, rows);
+      if (tot) {
+        // Inside the path: the headline is the length of totality, as before.
+        html = tot.clipped
+          // The shadow reaches this point outside the computed window, so the
+          // duration would be an undercount. Show only what is certain.
+          ? '<div class="big">totaliteetti</div>'
+          : '<div class="big">' + mmss(tot.duration) + '</div>';
+        // Start and end as their own rows rather than a range in one cell: three
+        // clocks wide, a range would not fit on a line.
+        rows = tot.clipped ? [['Maksimi', tot.max]]
+                           : [['Alkaa', tot.start], ['Maksimi', tot.max],
+                              ['Loppuu', tot.end]];
+        stampSec = tot.max;
+      } else if (loc && loc.visible) {
+        // Outside the path but the Sun is partly covered here: say by how much
+        // and when, which is what most of the map wanted to know.
+        html = '<div class="big">Osittainen: ' + Math.round(loc.obscuration * 100) +
+               ' % peitto</div>' +
+               '<p class="sub">magnitudi ' + loc.magnitude.toFixed(2).replace('.', ',') +
+               ' &nbsp;·&nbsp; aurinko ' + Math.round(loc.altMax) + '° korkeudella</p>';
+        rows = [['Alkaa', loc.start], ['Maksimi', loc.max], ['Loppuu', loc.end]];
+        stampSec = loc.max;
+      } else if (loc && loc.anywhere) {
+        html = '<div class="big">Ei näy täällä</div>' +
+               '<p class="sub">pimennys tapahtuu, mutta aurinko on horisontin alla</p>';
+      } else if (loc) {
+        html = '<div class="big">Ei näy täällä</div>' +
+               '<p class="sub">aurinko ei peity lainkaan tässä pisteessä</p>';
+      } else {
+        // An older data file without the local block: say so rather than
+        // showing an empty popup.
+        html = '<div class="big">Ei tietoja</div>' +
+               '<p class="sub">tälle pimennykselle ei ole laskettu paikallisia oloja</p>';
+      }
+
+      if (loc && loc.visible && loc.cutByHorizon) {
+        html += '<p class="sub warn">aurinko laskee kesken pimennyksen</p>';
+      }
+      if (loc && loc.visible && loc.startedBelow) {
+        html += '<p class="sub warn">pimennys on jo alkanut auringon noustessa</p>';
+      }
+
       clickPopup.options.maxWidth = popupMax();
-      html += t.html + '<p class="foot">' + Math.abs(lat).toFixed(3) + '°' +
-              (lat < 0 ? 'S' : 'N') + ', ' + Math.abs(lon).toFixed(3) + '°' +
-              (lon < 0 ? 'W' : 'E') + ' &nbsp;·&nbsp; ' +
-              zoneFoot(TZ.stamp(pl, instant(tot.max)), t.you) + '</p>';
+      var foot = Math.abs(lat).toFixed(3) + '°' + (lat < 0 ? 'S' : 'N') + ', ' +
+                 Math.abs(lon).toFixed(3) + '°' + (lon < 0 ? 'W' : 'E');
+      if (rows) {
+        var t = timesTable(pl, rows);
+        html += t.html;
+        foot += ' &nbsp;·&nbsp; ' + zoneFoot(TZ.stamp(pl, instant(stampSec)), t.you);
+      }
+      html += '<p class="foot">' + foot + '</p>';
       clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
     });
 
@@ -721,7 +867,7 @@
       map: map, data: null, setTime: setTime, setPlaying: setPlaying,
       markers: siteMarkers, isPlaying: function () { return playing; },
       time: function () { return now; }, closestApproach: closestApproach,
-      totalityAt: totalityAt, select: selectEclipse,
+      totalityAt: totalityAt, circumstancesAt: circumstancesAt, select: selectEclipse,
       index: window.ECLIPSE_INDEX || null, version: VERSION,
       openMenu: openMenu, closeMenu: closeMenu,
       menuOpen: function () { return menuOpen; }, catalog: catalog,

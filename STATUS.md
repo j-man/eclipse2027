@@ -1,7 +1,7 @@
 # STATUS — Eclipse 2027 → kaikki täydelliset pimennykset 1986–2066
 
 Valmis ja testattu. PLAN.md:n neljä vaatimusta ja viisi hyväksymiskriteeriä
-täyttyvät, ja TASK 2–11 on toteutettu. 83 selaintarkistusta + 7 vertailua
+täyttyvät, ja TASK 2–12 on toteutettu. 94 selaintarkistusta + 7 vertailua
 julkaistuun ennusteeseen menevät läpi.
 
 ## Miten ajetaan
@@ -402,6 +402,21 @@ Kestokäyrät kartalla näyttävät tämän suoraan.
   Merkityille yhdeksälle paikalle nämä ovat popupissa.
 - Kesäaikaoletukset ovat neljän vuoden päässä eivätkä siksi varmoja; UTC-ajat
   ovat aina oikein, paikallisajat riippuvat siitä pysyvätkö säännöt voimassa.
+
+### TASK 12 — paikalliset olot mistä tahansa pisteestä (valmis)
+
+Klikkaus polun ulkopuolella kertoi ennen vain kellonajan. Nyt jokainen piste
+vastaa: näkyykö pimennys, kuinka suuri peitto on (pinta-alana ja magnitudina)
+ja milloin se alkaa, on suurimmillaan ja loppuu — samat kolme kelloa kuin
+ennenkin. Jos aurinko laskee kesken pimennyksen, se sanotaan; jos pimennys ei
+näy lainkaan, sekin sanotaan.
+
+Datatiedostoihin tuli `local`-lohko: aurinko ja kuu maakiinteässä kehyksessä
+minuutin välein koko osittaisen vaiheen yli (~30 kB per pimennys). Selain
+laskee niistä saman geometrian kuin `eclipse_core` — erotus kahta kulmasädettä
+vasten, aurinko horisontin yläpuolella — joten mikään ei ole esilaskettua
+ruudukkoa. Helsinki 2026-08-12: magnitudi 0,833 klo 17:52:42 UTC, aurinko 2,4°
+korkeudella, ja se laskee ennen pimennyksen loppua. v12.
 
 ## Tiedostot
 
