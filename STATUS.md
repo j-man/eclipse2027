@@ -464,6 +464,41 @@ hybridipimennyksen rengasmaiset osuudet jäävät kokonaan pois ja jäljelle jä
 se hetki, jona umbra oikeasti koskettaa maata. Lyhyt punainen totaliteetti
 keltaisin rengasmaisin päin vaatii rengasmaisen radan tuen — oma työnsä.
 
+### TASK 14 — napaseutujen geometria häivytetään (valmis)
+
+Web-Mercator venyttää navoille päin rajatta, ja rata joka nousee korkealle
+arktiselle leveydelle piirtyy ristiin meneviksi sahalaitaisiksi viivoiksi.
+Ne luetaan piirtovirheeksi, vaikka data on oikein. Kukaan ei katso
+täydellistä pimennystä 85. leveyspiiriltä, joten geometria häivytetään:
+täysi peitto 72 asteeseen asti, kokonaan poissa 80 asteessa, ja sama
+molemmilla pallonpuoliskoilla. Vain esitystapa — dataan ei koskettu.
+
+Häivytys koskee kaikkia staattisia viivoja: keskilinjaa, pohjois- ja
+etelärajaa, kestokäyriä ja niiden 1m/2m-nimilappuja sekä rajojen välistä
+varjonauhaa. Kukin viiva pilkotaan jaksoihin, joilla on sama läpinäkyvyys,
+ja jaksot jakavat rajapisteensä niin ettei saumoja synny. Segmentti
+piirretään heikomman päänsä mukaan, joten mikään 80 asteen yläpuolelle
+yltävä ei jää näkyviin. Läpinäkyvyys kvantisoidaan 24 portaaseen: kahdeksan
+porrasta näkyi Etelämantereen jäällä harmaina suorakaiteina.
+
+Varjonauha rakennetaan nyt kaistaleena, jossa pohjois- ja etelärajaa
+kuljetaan suhteellisen sijainnin mukaan eikä indeksi indeksiltä. Rajat
+näytteistetään toisistaan riippumatta eivätkä ole välttämättä yhtä pitkiä
+(2033: 51 ja 49 pistettä), joten vanha `north.concat(south.reverse())`
+pariutti eri kohdat keskenään.
+
+Umbra jätettiin häivyttämättä. Se on animaatio, se kertoo missä varjo juuri
+nyt on, ja se on yksi umpinainen kuvio — venytettynäkin siisti, ei
+sahalaitainen. Rata häviää sen alta, varjo kulkee loppuun.
+
+**2026-08-12 muuttuu, toisin kuin tiketissä oletettiin.** Sen rata yltää
+89,1 asteeseen: 217 pistettä 618:sta on häivytysalueella ja 112 katoaa
+kokonaan. Kartan yläreunaan asti suihkunnut viivaviuhka on poissa ja
+jäljelle jää puhdas nauha Grönlannista Islannin kautta Espanjaan — juuri se
+mitä tiketti haki, mutta oletuspimennys näyttää nyt erilaiselta.
+2027-08-02 ei muutu: sen suurin leveys on 36,8 astetta, joten jokainen
+häivytyskerroin on tasan 1. check.py 94/94. v14.
+
 ## Tiedostot
 
 ```

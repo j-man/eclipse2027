@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 13;
+  var VERSION = 14;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -357,19 +357,107 @@
 
   function add(layer) { layer.addTo(map); dynamic.push(layer); return layer; }
 
+  // -- the high-latitude fade -----------------------------------------------
+  //
+  // Web Mercator stretches without limit towards the poles, and a track that
+  // runs into the high arctic arrives as jagged crossing lines that read as a
+  // drawing bug rather than as a shadow. Nobody watches totality from 85 N, so
+  // above FADE_FROM the geometry is faded out instead of drawn, and by FADE_TO
+  // it is gone. Presentation only: the data is untouched, and the umbra itself
+  // still travels the whole path.
+  var FADE_FROM = 72.0, FADE_TO = 80.0;
+  // Opacity is quantised so a track becomes a handful of layers rather than one
+  // per segment. It has to be fine enough that the steps do not show: the band
+  // is a fill, and over Antarctic ice a coarse ramp reads as grey rectangles.
+  var FADE_STEPS = 24;
+
+  function fadeAt(lat) {
+    var a = Math.abs(lat);
+    if (a <= FADE_FROM) return 1;
+    if (a >= FADE_TO) return 0;
+    return (FADE_TO - a) / (FADE_TO - FADE_FROM);
+  }
+
+  // A segment is drawn at the weaker of its two ends, so nothing that touches
+  // anything above FADE_TO survives.
+  function fadeOf(a, b) {
+    return Math.round(Math.min(fadeAt(a), fadeAt(b)) * FADE_STEPS) / FADE_STEPS;
+  }
+
+  // Split a line into runs of equal fade. Consecutive runs share the point
+  // between them, so the pieces join without a gap.
+  function fadeRuns(pts) {
+    var runs = [], cur = null;
+    for (var i = 0; i < pts.length - 1; i++) {
+      var f = fadeOf(pts[i][0], pts[i + 1][0]);
+      if (!cur || f !== cur.f) { cur = { f: f, pts: [pts[i]] }; runs.push(cur); }
+      cur.pts.push(pts[i + 1]);
+    }
+    return runs.filter(function (r) { return r.f > 0; });
+  }
+
+  function addFadedLine(pts, style) {
+    if (!pts || pts.length < 2) return;
+    var base = style.opacity === undefined ? 1 : style.opacity;
+    fadeRuns(pts).forEach(function (run) {
+      var o = {};
+      for (var k in style) o[k] = style[k];
+      o.opacity = base * run.f;
+      add(L.polyline(run.pts, o));
+    });
+  }
+
+  // The limits are sampled independently and need not be the same length, so
+  // the band between them is walked by position along each line rather than by
+  // index, and emitted as one ribbon per fade level.
+  function pointAt(line, t) {
+    var x = t * (line.length - 1);
+    var i = Math.min(line.length - 2, Math.max(0, Math.floor(x)));
+    var f = Math.min(1, Math.max(0, x - i));
+    return [line[i][0] + (line[i + 1][0] - line[i][0]) * f,
+            line[i][1] + (line[i + 1][1] - line[i][1]) * f];
+  }
+
+  function addFadedBand(north, south, style) {
+    if (!north || !south || north.length < 2 || south.length < 2) return;
+    var n = Math.max(north.length, south.length);
+    var base = style.fillOpacity === undefined ? 1 : style.fillOpacity;
+    var run = null;
+    for (var i = 0; i < n - 1; i++) {
+      var t0 = i / (n - 1), t1 = (i + 1) / (n - 1);
+      var a0 = pointAt(north, t0), a1 = pointAt(north, t1);
+      var b0 = pointAt(south, t0), b1 = pointAt(south, t1);
+      var f = Math.min(fadeOf(a0[0], a1[0]), fadeOf(b0[0], b1[0]));
+      if (!run || f !== run.f) {
+        run = { f: f, north: [a0], south: [b0] };
+        if (f > 0) {
+          (function (r, style_) {
+            var o = {};
+            for (var k in style_) o[k] = style_[k];
+            o.fillOpacity = base * r.f;
+            r.layer = add(L.polygon([[]], o));
+          })(run, style);
+        }
+      }
+      run.north.push(a1);
+      run.south.push(b1);
+      if (run.layer) run.layer.setLatLngs([run.north.concat(run.south.slice().reverse())]);
+    }
+  }
+
   function buildEclipse(d) {
     var north = d.path.north, south = d.path.south, centre = d.path.center;
 
-    // The band between the two limits, drawn as one closed ring.
-    add(L.polygon([north.concat(south.slice().reverse())], {
+    // The band between the two limits, as a ribbon that fades out to the north.
+    addFadedBand(north, south, {
       pane: 'overlayPane', stroke: false,
       fillColor: '#000913', fillOpacity: 0.42, interactive: false
-    }));
+    });
 
     [north, south].forEach(function (line) {
-      add(L.polyline(line, {
+      addFadedLine(line, {
         color: '#ffd24a', weight: 1.6, opacity: 0.95, interactive: false
-      }));
+      });
     });
 
     Object.keys(DUR_STYLE).forEach(function (lv) {
@@ -379,21 +467,23 @@
       ['north', 'south'].forEach(function (side) {
         var pts = c[side];
         if (!pts || pts.length < 2) return;
-        add(L.polyline(pts, {
+        addFadedLine(pts, {
           color: st.color, weight: 1.1, opacity: 0.8, interactive: false
-        }));
+        });
         var at = side === 'north' ? st.at : 1 - st.at;
         var mid = pts[Math.min(pts.length - 1, Math.floor(pts.length * at))];
+        // A label belonging to a stretch that has faded away goes with it.
+        if (fadeAt(mid[0]) <= 0) return;
         add(L.marker(mid, {
-          interactive: false,
+          interactive: false, opacity: fadeAt(mid[0]),
           icon: L.divIcon({ className: 'dur-label', html: st.label, iconSize: null })
         }));
       });
     });
 
-    add(L.polyline(centre.map(function (p) { return [p[0], p[1]]; }), {
+    addFadedLine(centre.map(function (p) { return [p[0], p[1]]; }), {
       color: '#ff4b3e', weight: 1.5, opacity: 0.95, interactive: false
-    }));
+    });
 
     umbra = add(L.polygon([frames[0].poly], {
       pane: 'umbra', color: '#cfe4ff', weight: 1, opacity: 0.55,
