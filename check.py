@@ -540,6 +540,46 @@ def main():
               not hidden_slider,
               "; ".join(hidden_slider) or "slider clear of the clock at all three sizes")
 
+        # 7j. and the attribution stays out of the controls' way
+        #
+        # The credit line is as long as it is; on a narrow screen it wraps to
+        # two lines across the whole bottom edge and lands on the play button.
+        # Measured at the same three sizes, after the same click.
+        buried = []
+        for w, h in PORTRAIT:
+            page.set_viewport_size({"width": w, "height": h})
+            page.reload()
+            page.wait_for_function("window.eclipse && eclipse.map")
+            page.wait_for_timeout(900)
+            page.evaluate("eclipse.setPlaying(false)")
+            page.evaluate("eclipse.map.fire('click',{latlng:L.latLng(25.7,32.65)})")
+            page.wait_for_timeout(400)
+            size = f"{w}x{h}"
+            boxes = page.evaluate(
+                "() => { const r = s => { const e = document.querySelector(s);"
+                "  if (!e) return null; const q = e.getBoundingClientRect();"
+                "  return [q.left, q.top, q.right, q.bottom]; };"
+                "  return {attr: r('.leaflet-control-attribution'),"
+                "          controls: r('#controls'), slider: r('#slider'),"
+                "          play: r('#play'), clock: r('#clock')}; }")
+            attr = boxes["attr"]
+            if attr is None:
+                buried.append(size + " (no attribution at all)")
+                continue
+            # the credit must still be there and readable, not merely moved away
+            text = page.text_content(".leaflet-control-attribution") or ""
+            if "Esri" not in text or "Leaflet" not in text:
+                buried.append(size + " (credits dropped)")
+            for name in ("controls", "slider", "play", "clock"):
+                other = boxes[name]
+                if (other and attr[0] < other[2] and other[0] < attr[2]
+                        and attr[1] < other[3] and other[1] < attr[3]):
+                    buried.append(f"{size} (attribution over the {name})")
+
+        check("7j. the attribution never sits on the controls in portrait",
+              not buried,
+              "; ".join(buried) or "one line, clear of the bar at all three sizes")
+
         page.set_viewport_size({"width": 1440, "height": 900})
         page.reload()
         page.wait_for_function("window.eclipse && eclipse.map")

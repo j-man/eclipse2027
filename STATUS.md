@@ -697,6 +697,23 @@ klikkauksen jälkeen eikä ennen sitä. Molempiin suuntiin: vanhalla CSS:llä
 kaatuu juuri raportoituun oireeseen ("clock covers the slider" kaikilla
 kolmella koolla), korjatulla menee läpi. 106/106. v21.
 
+**Sama alareuna, toinen peittäjä.** Karttalähteiden nimeäminen on niin pitkä
+rivi että se kietoutuu kapealla näytöllä kahdelle riville koko alareunan
+levyisenä (28 px) ja asettuu kontrollien päälle — puhelimessa se peitti
+play-napin. Pystyasennossa rivi pakotetaan nyt yhdeksi kolmella pisteellä
+(`white-space: nowrap` + ellipsis), jolloin siitä tulee 14 px korkea, ja
+palkki nostetaan 14 pikselistä 20:een niin että väliin jää ilmaa. Tärkeimmät
+maininnat — Leaflet ja Esri — ovat rivin alussa ja jäävät näkyviin;
+tarkistus vaatii molempien tekstien löytyvän eikä pelkkää siirtymistä pois
+tieltä. Työpöydällä rivi on jo valmiiksi yksi rivi oikeassa alanurkassa eikä
+muutu.
+
+check.py 7j: klikkauksen jälkeen nimeämisrivi ei ole kontrollien, liuttimen,
+play-napin eikä kellon päällä millään kolmella koolla, ja krediitit ovat yhä
+luettavissa. Molempiin suuntiin: edellisellä CSS:llä kaatuu kuudella
+päällekkäisyydellä (kontrollit ja play kaikilla kolmella koolla), tällä menee
+läpi. 107/107. v22.
+
 ## Tiedostot
 
 ```
