@@ -632,6 +632,17 @@ vaihe yli puoli tuntia molemmin puolin) jokaisella kolmella kellolla.
 Tarkistettu molempiin suuntiin: vanhalla app.js:llä molemmat kaatuvat
 ("missing C1, C2, C3, C4"), uudella menevät läpi. 99/99. v18.
 
+**Kieli.** Käyttäjälle ei näytetä ammattisanastoa. `totaliteetti` oli sitä:
+rivit ovat nyt "Täydellinen vaihe alkaa/loppuu", merkityn paikan otsikko
+"6 min 24 s täydellistä pimennystä", ja polun ulkopuolella "Täyden pimennyksen
+alueen ulkopuolella". `magnitudi` samoin — mutta pelkkä nimen vaihto
+"peittoasteeksi" tuotti "93 % peitto peittoaste 0,93", eli kaksi eri suuretta
+lähes samalla sanalla. Ne on nyt eroteltu sanoilla: otsikko kertoo kuinka
+suuri osa auringon kiekosta pimenee, sen alla oleva rivi kuinka suuri osa
+halkaisijasta — "93 % peitto · auringon halkaisijasta 0,93". Kortin
+kaaririvi oli jo valmiiksi selkokielinen. C1–C4 ei esiinny käyttöliittymässä
+missään. v19.
+
 ## Tiedostot
 
 ```

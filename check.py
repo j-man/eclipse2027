@@ -247,7 +247,7 @@ def main():
             "  [n, mk.getPopup().getContent()])")
         bad = [n for n, html in popups
                if "Maksimi" not in html
-               or ("totaliteettia" not in html and "ulkopuolella" not in html)]
+               or ("täydellistä pimennystä" not in html and "ulkopuolella" not in html)]
         check("4f. every marker popup states maximum time and totality status",
               not bad, "missing: " + ", ".join(bad) if bad else "")
 
@@ -943,8 +943,8 @@ def main():
                           r" (\d\d:\d\d:\d\d)", clicked, re.I)
             return [secs(g) for g in m.groups()] if m else None
 
-        c1, c2 = row_times("OSITTAINEN ALKAA"), row_times("TOTALITEETTI ALKAA")
-        c3, c4 = row_times("TOTALITEETTI LOPPUU"), row_times("OSITTAINEN LOPPUU")
+        c1, c2 = row_times("OSITTAINEN ALKAA"), row_times("TÄYDELLINEN VAIHE ALKAA")
+        c3, c4 = row_times("TÄYDELLINEN VAIHE LOPPUU"), row_times("OSITTAINEN LOPPUU")
         missing = [n for n, v in (("C1", c1), ("C2", c2), ("C3", c3), ("C4", c4))
                    if v is None]
         check("11f. a clicked point gets the same three clocks, and all four contacts",

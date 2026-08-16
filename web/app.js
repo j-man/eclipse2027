@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 18;
+  var VERSION = 19;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -838,21 +838,21 @@
 
     var head, note = '';
     if (m.duration) {
-      head = '<div class="big">' + mmss(m.duration) + ' totaliteettia</div>';
+      head = '<div class="big">' + mmss(m.duration) + ' täydellistä pimennystä</div>';
     } else {
       head = m.max_magnitude !== undefined
         ? '<div class="big">' + Math.round(m.max_magnitude * 100) + ' % osittainen</div>'
-        : '<div class="big">Ei totaliteettia</div>';
-      note = '<p class="note">Totaliteettivyöhykkeen ulkopuolella' +
+        : '<div class="big">Ei täydellistä vaihetta</div>';
+      note = '<p class="note">Täyden pimennyksen alueen ulkopuolella' +
              (m.dist_to_path_km !== undefined
                ? ' &mdash; ' + Math.round(m.dist_to_path_km) + ' km reunasta'
                : '') + '</p>';
     }
 
     row('Osittainen alkaa', m.partial_start);
-    row('Totaliteetti alkaa', m.total_start);
+    row('Täydellinen vaihe alkaa', m.total_start);
     row('Maksimi', m.max_s);
-    row('Totaliteetti loppuu', m.total_end);
+    row('Täydellinen vaihe loppuu', m.total_end);
     row('Osittainen loppuu', m.partial_end);
 
     var t = timesTable(pl, rows);
@@ -970,7 +970,7 @@
         html = tot.clipped
           // The shadow reaches this point outside the computed window, so the
           // duration would be an undercount. Show only what is certain.
-          ? '<div class="big">totaliteetti</div>'
+          ? '<div class="big">täydellinen vaihe</div>'
           : '<div class="big">' + mmss(tot.duration) + '</div>';
         // Start and end as their own rows rather than a range in one cell: three
         // clocks wide, a range would not fit on a line.
@@ -984,18 +984,23 @@
         } else {
           rows = [];
           if (loc && loc.visible) rows.push(['Osittainen alkaa', loc.start]);
-          rows.push(['Totaliteetti alkaa', tot.start]);
+          rows.push(['Täydellinen vaihe alkaa', tot.start]);
           rows.push(['Maksimi', tot.max]);
-          rows.push(['Totaliteetti loppuu', tot.end]);
+          rows.push(['Täydellinen vaihe loppuu', tot.end]);
           if (loc && loc.visible) rows.push(['Osittainen loppuu', loc.end]);
         }
         stampSec = tot.max;
       } else if (loc && loc.visible) {
         // Outside the path but the Sun is partly covered here: say by how much
         // and when, which is what most of the map wanted to know.
+        // Two different measures, so they have to be worded apart: the headline
+        // is the share of the Sun's disc that goes dark, the line under it the
+        // share of its width. "peittoaste" for both would read as one number
+        // said twice.
         html = '<div class="big">Osittainen: ' + Math.round(loc.obscuration * 100) +
                ' % peitto</div>' +
-               '<p class="sub">magnitudi ' + loc.magnitude.toFixed(2).replace('.', ',') +
+               '<p class="sub">auringon halkaisijasta ' +
+               loc.magnitude.toFixed(2).replace('.', ',') +
                ' &nbsp;·&nbsp; aurinko ' + Math.round(loc.altMax) + '° korkeudella</p>';
         // Named rather than a bare "Alkaa": out here the whole eclipse is the
         // partial phase, and the labels should say which phase they time.
