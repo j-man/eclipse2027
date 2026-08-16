@@ -480,6 +480,66 @@ def main():
         check("7h. an eclipse can be picked from the list in portrait",
               not picks, "; ".join(picks) or "selection lands at all three sizes")
 
+        # 7i. and the timeline survives choosing a place
+        #
+        # Picking a location widens the clock — it gains that place's offset and
+        # the UTC time beside it — and on a phone the bar had no room to give,
+        # so the clock ended up drawn over the slider and the jump button. The
+        # slider is measured after a real click, not before.
+        hidden_slider = []
+        for w, h in PORTRAIT:
+            page.set_viewport_size({"width": w, "height": h})
+            page.reload()
+            page.wait_for_function("window.eclipse && eclipse.map")
+            page.evaluate("eclipse.select('2027-08-02')")
+            page.wait_for_function("eclipse.data.meta.date === '2027-08-02'",
+                                   timeout=15000)
+            page.wait_for_timeout(900)
+            page.evaluate("eclipse.setPlaying(false)")
+            page.evaluate("eclipse.map.setView([25.7,32.6],7)")
+            page.wait_for_timeout(500)
+            page.evaluate("eclipse.map.fire('click',{latlng:L.latLng(25.7,32.65)})")
+            page.wait_for_timeout(500)
+            size = f"{w}x{h}"
+
+            boxes = page.evaluate(
+                "() => { const r = s => { const e = document.querySelector(s);"
+                "  const q = e.getBoundingClientRect();"
+                "  return [q.left, q.top, q.right, q.bottom]; };"
+                "  return {slider: r('#slider'), clock: r('#clock'),"
+                "          jump: r('#jump')}; }")
+            slider, clock, jump = boxes["slider"], boxes["clock"], boxes["jump"]
+
+            if slider[2] - slider[0] < 60 or slider[3] - slider[1] < 8:
+                hidden_slider.append(size + " (slider collapsed)")
+                continue
+            if slider[0] < 0 or slider[2] > w or slider[3] > h:
+                hidden_slider.append(size + " (slider off screen)")
+            for name, other in (("clock", clock), ("jump", jump)):
+                if name == "jump":
+                    continue
+                if (slider[0] < other[2] and other[0] < slider[2]
+                        and slider[1] < other[3] and other[1] < slider[3]):
+                    hidden_slider.append(f"{size} (clock covers the slider)")
+            # the jump button is on the same row and must not be sat on either
+            if (jump[0] < clock[2] and clock[0] < jump[2]
+                    and jump[1] < clock[3] and clock[1] < jump[3]):
+                hidden_slider.append(f"{size} (clock covers the jump button)")
+
+            # and it still answers: drag it and the clock moves
+            before = page.text_content("#clock-time")
+            page.evaluate("var s = document.getElementById('slider');"
+                          " s.value = String(Number(s.min) + 0.65 *"
+                          " (Number(s.max) - Number(s.min)));"
+                          " s.dispatchEvent(new Event('input', {bubbles: true}));")
+            page.wait_for_timeout(300)
+            if page.text_content("#clock-time") == before:
+                hidden_slider.append(size + " (slider does not drive the clock)")
+
+        check("7i. choosing a place leaves the timeline visible and working",
+              not hidden_slider,
+              "; ".join(hidden_slider) or "slider clear of the clock at all three sizes")
+
         page.set_viewport_size({"width": 1440, "height": 900})
         page.reload()
         page.wait_for_function("window.eclipse && eclipse.map")

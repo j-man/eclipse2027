@@ -668,6 +668,35 @@ vastaa kellon hetkeä, ja popupin sulkeminen vie laskurin mukanaan. Hetki
 syötetään sisään (`eclipse.etaLine(ms)`) eikä nukuta — muuten kaukaiset
 tapaukset olisivat tavoittamattomissa ja lähikin veisi minuutin. 105/105. v20.
 
+### TASK 19 — kello peitti aikajanan puhelimessa (valmis)
+
+Käyttäjän raportti: kun puhelimella klikkaa paikkaa, oikean alanurkan
+kellopalkki levenee ja aikajanan liutin jää sen alle.
+
+Mitattu playwrightilla ennen korjausta. Kello on 114 px leveä kunnes paikka
+valitaan ja 193 px sen jälkeen — se saa paikan oman siirtymän ("UTC+3") ja
+UTC-ajan viereensä. `#bar` on rivi jonka leveys on enintään `100vw - 28px`,
+`#clock` on `flex: none` eikä kutistu, ja `#slider`illa on `min-width: 120px`
+eikä sekään kutistu. Kumpikaan ei siis anna periksi, rivi vuotaa yli oman
+enimmäisleveytensä, ja kello piirtyy liuttimen ja hyppynapin päälle. 320x480:
+päällekkäisyys sekä liuttimen että hyppynapin kanssa, 380x640 ja 390x844:
+liuttimen kanssa.
+
+Puhelimessa palkki menee nyt kahdelle riville: kello ylle, kontrollit alle
+koko leveydeltä, ja liutin venyy vapaana `flex: 1`:llä ilman
+vähimmäisleveyttä. Aikajana saa siis enemmän tilaa kuin sillä oli ennen
+vikaakaan. Työpöytä ei muutu: liutin on 430 px ennen ja jälkeen.
+
+Sivuvaikutus jonka testit nappasivat: palkki on nyt kahden rivin verran
+korkeampi, joten avattu pimennyslista ylsi 320x480:ssä kelloon asti (7g
+kaatui). Listan enimmäiskorkeus laskettiin 50 vh:sta 42 vh:oon.
+
+check.py 7i: paikan valinnan jälkeen liutin on ruudulla, oikean kokoinen,
+kellon ja hyppynapin peittämättä, ja se yhä ohjaa kelloa — mitattuna oikean
+klikkauksen jälkeen eikä ennen sitä. Molempiin suuntiin: vanhalla CSS:llä
+kaatuu juuri raportoituun oireeseen ("clock covers the slider" kaikilla
+kolmella koolla), korjatulla menee läpi. 106/106. v21.
+
 ## Tiedostot
 
 ```

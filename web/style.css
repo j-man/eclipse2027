@@ -569,7 +569,9 @@ body.playing #play .ico-pause { display: block; }
   #pick-btn { margin-top: 7px; padding: 6px 9px 6px 11px; font-size: 12px; }
   /* The open list scrolls inside itself and stops well short of the timeline:
      it is a panel over the map, never a screen that replaces it. */
-  #eclipse-menu { max-height: min(50vh, 320px); }
+  /* The bar is two rows tall on a phone now, so the list has to stop
+     higher up than it used to or it reaches the clock. */
+  #eclipse-menu { max-height: min(42vh, 320px); }
   #eclipse-menu .row { padding: 7px 8px; }
 
   /* A popup answers what the user just tapped, and on a phone it opens under
@@ -584,9 +586,22 @@ body.playing #play .ico-pause { display: block; }
   /* Narrow enough and the attribution wraps across the whole bottom edge, so
      the badge moves to the top-left corner, on the strip above the card. */
   #version { top: 0; bottom: auto; }
-  #bar { bottom: 14px; gap: 7px; }
-  #controls { gap: 9px; padding: 8px 14px 8px 8px; }
-  #slider { width: 34vw; }
+  /* Choosing a place widens the clock by some eighty pixels — it gains the
+     place's own offset and the UTC time beside it — and neither the clock
+     (flex: none) nor the slider (min-width) could give ground, so the row
+     overflowed its own max-width and the clock was drawn over the slider and
+     the jump button. On a phone the two go on separate lines instead, which
+     also gives the timeline the full width a timeline wants. */
+  #bar {
+    bottom: 14px;
+    gap: 7px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: calc(100vw - 28px);
+  }
+  #clock { order: 1; }
+  #controls { order: 2; width: 100%; gap: 9px; padding: 8px 14px 8px 8px; }
+  #slider { width: auto; flex: 1 1 auto; min-width: 0; }
   #clock { padding: 5px 11px; }
   #clock-time { font-size: 17px; letter-spacing: 1px; }
   /* Three columns of times have to fit a phone, so they tighten and the event
