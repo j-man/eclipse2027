@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 19;
+  var VERSION = 20;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -568,6 +568,13 @@
             setSpan(pl, { visible: true, start: m.partial_start, end: m.partial_end },
                     m.total_start !== undefined
                       ? { start: m.total_start, end: m.total_end } : null);
+            var phases = [['pimennys alkaa', m.partial_start]];
+            if (m.total_start !== undefined) {
+              phases.push(['täydellinen vaihe alkaa', m.total_start]);
+              phases.push(['täydellinen vaihe loppuu', m.total_end]);
+            }
+            phases.push(['pimennys ohi', m.partial_end]);
+            startEta(phases);
           }
         }));
     });
@@ -827,6 +834,66 @@
     return Math.max(230, Math.min(430, window.innerWidth - 46));
   }
 
+  // -- the countdown ---------------------------------------------------------
+  //
+  // Standing at the site, the question stops being "when" and becomes "how
+  // long now". So once a place is chosen the popup carries a line that ticks:
+  // the next phase still ahead of it, and the time left to the second. Every
+  // tick is computed from the clock rather than counted down from the last
+  // one, so it cannot drift, and it stops as soon as the popup closes.
+
+  var etaTimer = null;
+  var etaPhases = [];        // [{label, at}] in the order they happen
+
+  // Whole units, and the seconds always two digits so the line stops jumping
+  // about as it counts down.
+  function etaText(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+    var m = Math.floor(s % 3600 / 60), sec = s % 60;
+    var out = [];
+    if (d) out.push(d + ' pv');
+    if (d || h) out.push(h + ' t');
+    if (d || h || m) out.push(m + ' min');
+    out.push(pad(sec) + ' s');
+    return out.join(' ');
+  }
+
+  // The first phase still to come, or null once they have all been and gone.
+  function nextPhase(nowMs) {
+    for (var i = 0; i < etaPhases.length; i++) {
+      if (etaPhases[i].at > nowMs) return etaPhases[i];
+    }
+    return null;
+  }
+
+  function etaLine(nowMs) {
+    var next = nextPhase(nowMs);
+    if (!next) return 'pimennys ohi';
+    return next.label + ' ' + etaText(next.at - nowMs);
+  }
+
+  function drawEta() {
+    var box = document.querySelector('.leaflet-popup-content .eta');
+    if (!box) { stopEta(); return; }
+    box.textContent = etaLine(Date.now());
+  }
+
+  function stopEta() {
+    if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
+  }
+
+  // `phases` is [[label, seconds-of-day], ...] in the order they happen.
+  function startEta(phases) {
+    stopEta();
+    etaPhases = (phases || []).map(function (p) {
+      return { label: p[0], at: instant(p[1]) };
+    });
+    if (!etaPhases.length) return;
+    drawEta();
+    etaTimer = setInterval(drawEta, 1000);
+  }
+
   function popupHtml(m) {
     // Marked sites carry their own IANA zone, so nothing is looked up here.
     var pl = TZ.named(m.tz, m.lon);
@@ -856,7 +923,8 @@
     row('Osittainen loppuu', m.partial_end);
 
     var t = timesTable(pl, rows);
-    return '<h3>' + m.name + '</h3>' + head + note + t.html +
+    return '<h3>' + m.name + '</h3>' + head + note +
+           (m.partial_start !== undefined ? '<p class="eta"></p>' : '') + t.html +
            '<p class="foot">' + Math.abs(m.lat).toFixed(4) + '°' +
            (m.lat < 0 ? 'S' : 'N') + ', ' +
            Math.abs(m.lon).toFixed(4) + '°' + (m.lon < 0 ? 'W' : 'E') +
@@ -922,6 +990,7 @@
     });
     map.on('popupclose', function () {
       document.body.classList.remove('popup-open');
+      stopEta();
     });
 
     buildMenu();
@@ -1027,6 +1096,19 @@
         html += '<p class="sub warn">pimennys on jo alkanut auringon noustessa</p>';
       }
 
+      // The phases this place still has ahead of it, in the order they come.
+      // The line goes above the table of times rather than under the footer:
+      // it is the only thing on the popup that moves, and the reason someone
+      // standing at the site is looking at it at all.
+      var phases = [];
+      if (loc && loc.visible) phases.push(['pimennys alkaa', loc.start]);
+      if (tot && !tot.clipped) {
+        phases.push(['täydellinen vaihe alkaa', tot.start]);
+        phases.push(['täydellinen vaihe loppuu', tot.end]);
+      }
+      if (loc && loc.visible) phases.push(['pimennys ohi', loc.end]);
+      if (phases.length) html += '<p class="eta"></p>';
+
       clickPopup.options.maxWidth = popupMax();
       var foot = Math.abs(lat).toFixed(3) + '°' + (lat < 0 ? 'S' : 'N') + ', ' +
                  Math.abs(lon).toFixed(3) + '°' + (lon < 0 ? 'W' : 'E');
@@ -1038,6 +1120,7 @@
       html += '<p class="foot">' + foot + '</p>';
       setSpan(pl, loc, tot);
       clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
+      startEta(phases);
     });
 
     document.addEventListener('keydown', function (e) {
@@ -1079,7 +1162,13 @@
       },
       stampFor: function (zone, sec) {
         return TZ.stamp(TZ.named(zone), instant(sec === undefined ? now : sec));
-      }
+      },
+      // The countdown, for scripted checks: what it would read at any instant,
+      // and which phase it is counting to, without waiting a second for it.
+      etaText: etaText,
+      etaLine: etaLine,
+      etaPhases: function () { return etaPhases.slice(); },
+      nextPhase: nextPhase
     };
 
     maybePulse();

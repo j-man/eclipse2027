@@ -643,6 +643,31 @@ halkaisijasta — "93 % peitto · auringon halkaisijasta 0,93". Kortin
 kaaririvi oli jo valmiiksi selkokielinen. C1–C4 ei esiinny käyttöliittymässä
 missään. v19.
 
+### TASK 18 — laskuri seuraavaan vaiheeseen (valmis)
+
+Pyyntö tuli kahtena sanana, "sit sekunti eta". Luettu näin: paikan päällä
+seisova haluaa nähdä sekuntien juoksevan kohti hetkeä, ei vain kellonaikaa
+taulukossa.
+
+Kun paikka on valittu, popupiin tulee rivi joka tikittää: seuraava vielä
+edessä oleva vaihe ja aika siihen sekunnin tarkkuudella. Vaiheet järjestyksessä
+pimennys alkaa → täydellinen vaihe alkaa → täydellinen vaihe loppuu → pimennys
+ohi, ja kun kaikki ovat menneet, rivillä lukee "pimennys ohi". Rivi on
+otsikon alla ja aikataulukon yläpuolella: se on ainoa asia popupissa joka
+liikkuu, ja se on syy miksi sitä katsotaan.
+
+Yksi ajastin, ja jokainen tikitys lasketaan kellosta eikä vähennetä
+edellisestä, joten se ei valu. Popupin sulkeminen pysäyttää sen; mitään ei
+tikitä taustalla. Kaukaisuudessa muoto on "350 pv 12 t 57 min 04 s", lähellä
+pelkkiä sekunteja, ja sekunnit ovat aina kaksinumeroisia jottei rivi hyppisi.
+
+check.py 13a–13f: rivi on olemassa, vaiheet ovat oikeassa järjestyksessä,
+jäljellä oleva aika on oikein neljällä eri etäisyydellä sekunneista päiviin,
+laskuri siirtyy seuraavaan vaiheeseen kunkin mentyä, ruudulla oleva teksti
+vastaa kellon hetkeä, ja popupin sulkeminen vie laskurin mukanaan. Hetki
+syötetään sisään (`eclipse.etaLine(ms)`) eikä nukuta — muuten kaukaiset
+tapaukset olisivat tavoittamattomissa ja lähikin veisi minuutin. 105/105. v20.
+
 ## Tiedostot
 
 ```

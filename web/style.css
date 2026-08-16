@@ -605,3 +605,12 @@ body.playing #play .ico-pause { display: block; }
     letter-spacing: 0.3px;
   }
 }
+
+/* The countdown line in a popup: the one thing on it that moves. */
+.leaflet-popup-content .eta {
+  color: #ffd75c;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin: 5px 0 0;
+}

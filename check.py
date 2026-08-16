@@ -1056,6 +1056,75 @@ def main():
         check("12k. and it names the sunset",
               "AURINKO LASKEE" in text.upper(), text[:100])
 
+        # 13. the countdown
+        #
+        # Driven by injecting an instant rather than by sleeping: the page is
+        # asked what it would read at a chosen moment, so a check that would
+        # otherwise take a minute of real time takes none, and the far-future
+        # cases are reachable at all.
+        page.evaluate("eclipse.map.closePopup(); eclipse.select('2027-08-02')")
+        page.wait_for_function("eclipse.data.meta.date === '2027-08-02'", timeout=15000)
+        page.wait_for_timeout(1000)
+        page.evaluate("eclipse.map.setView([25.7,32.6],7)")
+        page.wait_for_timeout(600)
+        page.evaluate("eclipse.map.fire('click',{latlng:L.latLng(25.7,32.65)})")
+        page.wait_for_timeout(600)
+
+        eta = page.query_selector(".leaflet-popup-content .eta")
+        eta_text = eta.inner_text().strip() if eta else ""
+        check("13a. a clicked point gets a countdown line",
+              eta is not None and eta_text != "", repr(eta_text))
+
+        phases = page.evaluate("eclipse.etaPhases()")
+        check("13b. it counts to the four phases in the order they happen",
+              [p["label"] for p in phases] == ["pimennys alkaa",
+                                               "täydellinen vaihe alkaa",
+                                               "täydellinen vaihe loppuu",
+                                               "pimennys ohi"]
+              and all(phases[i]["at"] < phases[i + 1]["at"] for i in range(3)),
+              ", ".join(p["label"] for p in phases))
+
+        # Exact arithmetic at a chosen distance from the first phase.
+        first = phases[0]["at"]
+        want = {
+            first - 5_000: "pimennys alkaa 05 s",
+            first - 65_000: "pimennys alkaa 1 min 05 s",
+            first - (3 * 3600 + 12 * 60 + 5) * 1000: "pimennys alkaa 3 t 12 min 05 s",
+            first - (26 * 3600 + 12 * 60 + 5) * 1000:
+                "pimennys alkaa 1 pv 2 t 12 min 05 s",
+        }
+        wrong = [(page.evaluate("eclipse.etaLine(%d)" % at), text)
+                 for at, text in want.items()
+                 if page.evaluate("eclipse.etaLine(%d)" % at) != text]
+        check("13c. the remaining time is right from seconds out to days",
+              not wrong, "; ".join("%r != %r" % w for w in wrong) or "4 distances")
+
+        # It follows the phases through rather than sticking on the first.
+        between = page.evaluate("eclipse.etaLine(%d)" % (phases[0]["at"] + 1000))
+        during = page.evaluate("eclipse.etaLine(%d)" % (phases[1]["at"] + 1000))
+        after = page.evaluate("eclipse.etaLine(%d)" % (phases[3]["at"] + 1000))
+        check("13d. it moves on to the next phase as each one passes",
+              between.startswith("täydellinen vaihe alkaa")
+              and during.startswith("täydellinen vaihe loppuu")
+              and after == "pimennys ohi",
+              " | ".join([between, during, after]))
+
+        # And what is on screen is what the clock says now, give or take the
+        # second that may have elapsed since it was drawn.
+        live = page.evaluate(
+            "() => { const e = document.querySelector('.leaflet-popup-content .eta');"
+            "  return [e.textContent, eclipse.etaLine(Date.now())]; }")
+        check("13e. the line on screen is the one the clock is at",
+              live[0] == live[1]
+              or live[0] == page.evaluate("eclipse.etaLine(Date.now() - 1000)"),
+              " vs ".join(live))
+
+        # Closing it stops the ticking rather than leaving a timer running.
+        page.evaluate("eclipse.map.closePopup()")
+        page.wait_for_timeout(300)
+        check("13f. closing the popup takes the countdown with it",
+              page.query_selector(".leaflet-popup-content .eta") is None)
+
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",
               all(len(data["contours"][k]["north"]) > 10 for k in data["contours"]),
