@@ -561,6 +561,40 @@ Keskilinjat ovat pisteelleen samat. 2026-08-12 ja 2027-08-02 ovat tavulleen
 ennallaan `meta.git`-leimaa lukuun ottamatta. check.py 94/94, uusi kuva
 `hybrid-2050`. v16.
 
+### TASK 16 — pimennysvalitsin pystyasennossa (valmis)
+
+Käyttäjän raportti puhelimesta: pystyasennossa pimennystä ei voinut vaihtaa
+lainkaan, piti kääntää puhelin vaakaan. Syy oli yhdellä rivillä:
+
+```css
+@media (max-width: 720px) { #title { display: none; } }
+```
+
+`#title` sisältää koko valitsimen — tietokortin, "Valitse pimennys" -napin ja
+listan. Kaikki alle 721 pikselin levyiset näkymät jäivät siis ilman ainoaa
+tapaa vaihtaa pimennystä. Vaaka-asento toimi vain siksi, että puhelin on
+kyljellään leveämpi kuin katkaisukohta: 844 > 720.
+
+Toistettu playwrightilla ennen korjausta: 320x480, 380x640 ja 390x844
+antoivat kaikki `display: none`, nollan kokoisen laatikon ja klikkauksen
+aikakatkaisun; 844x390 toimi.
+
+Nyt kortti kutistetaan piilottamisen sijaan: kartan klikkausvihje pois,
+tekstikoot askeleen alas, kortti koko leveydelle kiinteän palstan sijaan, ja
+lista enintään 50 vh omalla vierityksellään niin ettei se koskaan korvaa
+karttaa. Versiomerkki jää ylänurkkaan ja kortti alkaa sen alta (18 px), joten
+7d:n törmäystarkistus pysyy puhtaana. Työpöytäasettelu ei muutu rivilläkään:
+koko muutos on `max-width: 720px` -lohkon sisällä.
+
+check.py sai neljä uutta tarkistusta (7e–7h). 7d kysyy vain osuvatko
+laatikot toisiinsa; nämä kysyvät toimiiko asia: onko nappi ruudulla ja
+peukalon kokoinen, aukeaako lista siihen koskemalla, jääkö aikajana ja kello
+listan alle käytettäviksi, ja vaihtuuko pimennys kun listasta valitsee. Jos
+lista ei aukea, kaksi jälkimmäistä ilmoittavat sen sijaan että vaikenisivat —
+muuten ne läpäisisivät juuri sen asettelun joka valitsimen piilottaa.
+Tarkistettu molempiin suuntiin: vanhalla CSS:llä 7e–7h kaatuvat kaikki neljä
+(94/98), korjatulla menevät läpi (98/98). v17.
+
 ## Tiedostot
 
 ```

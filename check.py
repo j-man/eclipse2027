@@ -399,8 +399,91 @@ def main():
                     collisions.append(f"{w}x{h} vs {other}")
         check("7d. badge never overlaps other chrome at any window size",
               not collisions, "; ".join(collisions) or "10 window sizes clear")
+
+        # 7e-7h. a phone held upright
+        #
+        # 7d only asks whether boxes overlap. These ask whether the thing can be
+        # used: the picker was once hidden outright below 720 px, so the only
+        # way to change eclipse on a phone was to turn it sideways. Every step a
+        # user actually takes is exercised here, at the three sizes that matter.
+        PORTRAIT = ((320, 480), (380, 640), (390, 844))
+        shown, opens, picks, chrome = [], [], [], []
+        for w, h in PORTRAIT:
+            page.set_viewport_size({"width": w, "height": h})
+            page.reload()
+            page.wait_for_function("window.eclipse && eclipse.map")
+            page.wait_for_timeout(900)
+            size = f"{w}x{h}"
+
+            # visible, on screen, and big enough to hit with a thumb
+            box = page.evaluate(
+                "() => { const e = document.querySelector('#pick-btn');"
+                "  const r = e.getBoundingClientRect();"
+                "  return [r.left, r.top, r.right, r.bottom, r.height]; }")
+            if not (box[4] >= 24 and box[0] >= 0 and box[1] >= 0
+                    and box[2] <= w and box[3] <= h):
+                shown.append(size)
+
+            # A list that never opened leaves the two checks below with nothing
+            # to measure. They have to say so rather than stay silent, or they
+            # would report success on the very layout that hides the picker.
+            try:
+                page.click("#eclipse-card", timeout=2000)
+                page.wait_for_timeout(400)
+                shut = page.evaluate(
+                    "document.querySelector('#eclipse-menu').hidden")
+            except Exception:
+                shut = "unclickable"
+            if shut:
+                note = size + (" (unclickable)" if shut is not True else "")
+                opens.append(note)
+                chrome.append(note + " (list never opened)")
+                picks.append(note + " (list never opened)")
+                continue
+
+            # the open list is a panel over the map, not a replacement for it
+            menu = page.evaluate(
+                "() => { const r = document.querySelector('#eclipse-menu')"
+                "  .getBoundingClientRect(); return [r.top, r.bottom]; }")
+            for name in ("#controls", "#clock"):
+                r = page.evaluate(
+                    "s => { const e = document.querySelector(s);"
+                    "  const q = e.getBoundingClientRect();"
+                    "  return [q.top, q.bottom, q.height,"
+                    "          getComputedStyle(e).display]; }", name)
+                if r[3] == "none" or r[2] < 20 or r[1] > h + 1 or r[0] < menu[1]:
+                    chrome.append(f"{size} {name}")
+
+            # and picking one from it actually changes the eclipse
+            before = page.evaluate("eclipse.data.meta.date")
+            rows = page.query_selector_all("#eclipse-menu .row")
+            target = next((r for r in rows
+                           if r.get_attribute("data-date") != before), None)
+            if target is None:
+                picks.append(size + " (no other row)")
+                continue
+            want = target.get_attribute("data-date")
+            target.click()
+            try:
+                page.wait_for_function(
+                    "d => eclipse.data && eclipse.data.meta.date === d",
+                    arg=want, timeout=15000)
+            except Exception:
+                picks.append(f"{size} ({before} -> {want} failed)")
+
+        check("7e. the picker is on screen and thumb-sized in portrait",
+              not shown, "; ".join(shown) or "320x480, 380x640, 390x844")
+        check("7f. tapping it opens the list without rotating the phone",
+              not opens, "; ".join(opens) or "opens at all three sizes")
+        check("7g. the open list leaves the timeline and clock usable",
+              not chrome, "; ".join(chrome) or "controls and clock clear of it")
+        check("7h. an eclipse can be picked from the list in portrait",
+              not picks, "; ".join(picks) or "selection lands at all three sizes")
+
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.wait_for_timeout(400)
+        page.reload()
+        page.wait_for_function("window.eclipse && eclipse.map")
+        page.wait_for_timeout(900)
 
         # 8. the 1986-2066 catalogue
         #

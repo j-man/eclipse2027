@@ -549,9 +549,31 @@ body.playing #play .ico-pause { display: block; }
 .leaflet-container a.leaflet-popup-close-button { color: var(--ink-dim); }
 
 @media (max-width: 720px) {
-  #title { display: none; }
+  /* The picker is the only way to reach another eclipse, so it has to survive
+     a narrow screen. It used to be hidden outright here, which left a phone
+     held upright with no way to change eclipse at all — turning it sideways
+     was the only workaround, because landscape is wider than this breakpoint.
+     So it is made compact instead: the click-the-map hint goes, the type comes
+     down a step, and the card spans the width rather than a fixed column. */
+  #title {
+    top: 18px;
+    left: 8px;
+    width: calc(100vw - 16px);
+  }
+  #title .hint { display: none; }
+  #eclipse-card { padding: 7px 11px 8px; border-radius: 11px; }
+  #eclipse-card .eyebrow { font-size: 9px; letter-spacing: 0.7px; }
+  #card-title { font-size: 13.5px; }
+  #card-badge { font-size: 10.5px; }
+  #title-info { font-size: 10.5px; }
+  #pick-btn { margin-top: 7px; padding: 6px 9px 6px 11px; font-size: 12px; }
+  /* The open list scrolls inside itself and stops well short of the timeline:
+     it is a panel over the map, never a screen that replaces it. */
+  #eclipse-menu { max-height: min(50vh, 320px); }
+  #eclipse-menu .row { padding: 7px 8px; }
+
   /* Narrow enough and the attribution wraps across the whole bottom edge, so
-     the badge moves to the top-left corner the hidden title just vacated. */
+     the badge moves to the top-left corner, on the strip above the card. */
   #version { top: 0; bottom: auto; }
   #bar { bottom: 14px; gap: 7px; }
   #controls { gap: 9px; padding: 8px 14px 8px 8px; }
