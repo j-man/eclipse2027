@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 17;
+  var VERSION = 18;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -559,7 +559,17 @@
         // Opening a site hands its zone to the header clock. The time itself is
         // deliberately left alone: a marker click is a request to read, not to
         // move the timeline.
-        .on('popupopen', function () { setPlace(TZ.named(m.tz, m.lon)); }));
+        .on('popupopen', function () {
+          var pl = TZ.named(m.tz, m.lon);
+          setPlace(pl);
+          // A marked site carries its contact times already computed, so the
+          // card can say the same thing here as it does for a map click.
+          if (m.partial_start !== undefined) {
+            setSpan(pl, { visible: true, start: m.partial_start, end: m.partial_end },
+                    m.total_start !== undefined
+                      ? { start: m.total_start, end: m.total_end } : null);
+          }
+        }));
     });
   }
 
@@ -772,6 +782,24 @@
     renderClock();
   }
 
+  // The card's third line answers "how long am I standing here for" once a
+  // point has been picked: the whole eclipse, then the total phase inside it,
+  // in that place's own clock. Minutes are enough for the partial phase, which
+  // runs for hours; totality is seconds-precise because it is over in one.
+  // Picking another eclipse rewrites the line back to the centre-line figure.
+  function setSpan(pl, loc, tot) {
+    if (!loc || !loc.visible) return;
+    function at(sec, withSeconds) {
+      var s = TZ.stamp(pl, instant(sec)).localSec;
+      return withSeconds ? hms(s) : hms(s).slice(0, 5);
+    }
+    var line = 'osittainen ' + at(loc.start) + '–' + at(loc.end);
+    if (tot && !tot.clipped) {
+      line += ', täydellinen ' + at(tot.start, true) + '–' + at(tot.end, true);
+    }
+    el.titleInfo.textContent = line;
+  }
+
   function tick(ms) {
     if (!playing) return;
     var dt = last ? Math.min(0.25, (ms - last) / 1000) : 0;
@@ -887,6 +915,15 @@
     clickPopup = L.popup({ maxWidth: popupMax(), className: 'click-popup',
                            autoPan: false });
 
+    // Narrow screens let the card shrink out of an open popup's way; see the
+    // popup-open rules in the stylesheet.
+    map.on('popupopen', function () {
+      document.body.classList.add('popup-open');
+    });
+    map.on('popupclose', function () {
+      document.body.classList.remove('popup-open');
+    });
+
     buildMenu();
     el.card.onclick = function () { menuOpen ? closeMenu() : openMenu(); };
     // A click anywhere else dismisses it; the card's own click is handled above.
@@ -937,9 +974,21 @@
           : '<div class="big">' + mmss(tot.duration) + '</div>';
         // Start and end as their own rows rather than a range in one cell: three
         // clocks wide, a range would not fit on a line.
-        rows = tot.clipped ? [['Maksimi', tot.max]]
-                           : [['Alkaa', tot.start], ['Maksimi', tot.max],
-                              ['Loppuu', tot.end]];
+        //
+        // Totality is the headline, but it is not the whole eclipse: standing
+        // at the site you also want to know when the Sun is first bitten into
+        // and when it is finally clear again. So the partial contacts bracket
+        // the total ones, in the same order and wording the marked sites use.
+        if (tot.clipped) {
+          rows = [['Maksimi', tot.max]];
+        } else {
+          rows = [];
+          if (loc && loc.visible) rows.push(['Osittainen alkaa', loc.start]);
+          rows.push(['Totaliteetti alkaa', tot.start]);
+          rows.push(['Maksimi', tot.max]);
+          rows.push(['Totaliteetti loppuu', tot.end]);
+          if (loc && loc.visible) rows.push(['Osittainen loppuu', loc.end]);
+        }
         stampSec = tot.max;
       } else if (loc && loc.visible) {
         // Outside the path but the Sun is partly covered here: say by how much
@@ -948,7 +997,10 @@
                ' % peitto</div>' +
                '<p class="sub">magnitudi ' + loc.magnitude.toFixed(2).replace('.', ',') +
                ' &nbsp;·&nbsp; aurinko ' + Math.round(loc.altMax) + '° korkeudella</p>';
-        rows = [['Alkaa', loc.start], ['Maksimi', loc.max], ['Loppuu', loc.end]];
+        // Named rather than a bare "Alkaa": out here the whole eclipse is the
+        // partial phase, and the labels should say which phase they time.
+        rows = [['Osittainen alkaa', loc.start], ['Maksimi', loc.max],
+                ['Osittainen loppuu', loc.end]];
         stampSec = loc.max;
       } else if (loc && loc.anywhere) {
         html = '<div class="big">Ei näy täällä</div>' +
@@ -979,6 +1031,7 @@
         foot += ' &nbsp;·&nbsp; ' + zoneFoot(TZ.stamp(pl, instant(stampSec)), t.you);
       }
       html += '<p class="foot">' + foot + '</p>';
+      setSpan(pl, loc, tot);
       clickPopup.setLatLng(e.latlng).setContent(html).openOn(map);
     });
 

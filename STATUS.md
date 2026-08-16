@@ -595,6 +595,43 @@ muuten ne läpäisisivät juuri sen asettelun joka valitsimen piilottaa.
 Tarkistettu molempiin suuntiin: vanhalla CSS:llä 7e–7h kaatuvat kaikki neljä
 (94/98), korjatulla menevät läpi (98/98). v17.
 
+### TASK 17 — osittaisen vaiheen kontaktiajat (valmis)
+
+Käyttäjä Mallorcalla 12.8.2026: sovellus kertoi milloin totaliteetti alkaa,
+mutta ei milloin pimennys itse alkaa (C1) tai milloin se on kokonaan ohi (C4).
+Paikan päällä juuri sitä olisi tarvinnut.
+
+Tarkistettiin ensin mitä oli jo olemassa, ettei tehdä samaa kahdesti.
+`local_circumstances` laski `partial_start`/`partial_end` jo valmiiksi, ne
+olivat payloadissa, ja merkittyjen paikkojen popup näytti kaikki neljä
+kontaktia jo ennestään. Myös radan ulkopuolinen klikkaus näytti C1/C4:n ja
+magnitudin. Aukko oli tasan yhdessä paikassa: klikkaus totaliteettivyöhykkeen
+*sisällä* näytti vain C2, maksimin ja C3 — eli juuri se tapaus jossa käyttäjä
+seisoi. Nyt osittaiset kontaktit kehystävät totaliteetin samassa sanamuodossa
+kuin merkityillä paikoilla. Ulkopuolella rivit nimettiin `Alkaa`/`Loppuu`
+sijaan `Osittainen alkaa`/`Osittainen loppuu`, koska siellä koko pimennys on
+osittainen ja rivin pitää sanoa mitä se ajoittaa.
+
+Korttiin tuli valitun pisteen koko kaari: "osittainen 11:40–14:26,
+täydellinen 13:02:07–13:08:31" paikan omassa ajassa. Minuutit riittävät
+tunteja kestävälle osittaiselle vaiheelle, totaliteetti sekunnilleen. Sama
+rivi tulee myös merkityn paikan popupista, joka kantaa aikansa valmiina.
+Pimennystä vaihtaessa rivi palaa keskilinjan kestoon.
+
+Viisi riviä kolmella kellolla on korkeampi popup kuin kolme, ja puhelimen
+pystyasennossa se avautui kortin alle. Sitä ei voi nostaa kortin päälle —
+Leaflet piirtää popupit karttapaneelin sisään ja sen pinoamiskonteksti
+kattaa ne — eikä sitä voi panoroida esiin, koska klikkaus ei saa liikuttaa
+karttaa (`autoPan: false`, ja 6f vartioi sitä). Niinpä kortti väistää:
+`popup-open` piilottaa sen niin kauan kuin popup on auki, kapeilla näytöillä
+vain. Popup kertoo saman ja enemmän, ja sulkeminen tuo kortin takaisin.
+
+check.py: 11f vaatii nyt kolmen kellon lisäksi kaikki neljä kontaktia, ja uusi
+11f2 vaatii että ne kehystävät totaliteetin (C1 < C2 < C3 < C4, ja osittainen
+vaihe yli puoli tuntia molemmin puolin) jokaisella kolmella kellolla.
+Tarkistettu molempiin suuntiin: vanhalla app.js:llä molemmat kaatuvat
+("missing C1, C2, C3, C4"), uudella menevät läpi. 99/99. v18.
+
 ## Tiedostot
 
 ```

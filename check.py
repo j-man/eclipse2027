@@ -934,12 +934,35 @@ def main():
             hp.query_selector(".click-popup").inner_text().split())
         crow = re.search(r"MAKSIMI (\d\d:\d\d:\d\d) (\d\d:\d\d:\d\d) "
                          r"(\d\d:\d\d:\d\d)", clicked, re.I)
-        check("11f. a clicked point gets the same three clocks",
-              crow is not None
+        # Every contact the observer can see, on all three clocks. Totality is
+        # the headline but not the whole eclipse: the popup used to time only
+        # C2-C3, so someone standing in the path could not find out when the
+        # partial phase began or when it was finally over.
+        def row_times(label):
+            m = re.search(label + r" (\d\d:\d\d:\d\d) (\d\d:\d\d:\d\d)"
+                          r" (\d\d:\d\d:\d\d)", clicked, re.I)
+            return [secs(g) for g in m.groups()] if m else None
+
+        c1, c2 = row_times("OSITTAINEN ALKAA"), row_times("TOTALITEETTI ALKAA")
+        c3, c4 = row_times("TOTALITEETTI LOPPUU"), row_times("OSITTAINEN LOPPUU")
+        missing = [n for n, v in (("C1", c1), ("C2", c2), ("C3", c3), ("C4", c4))
+                   if v is None]
+        check("11f. a clicked point gets the same three clocks, and all four contacts",
+              crow is not None and not missing
               and secs(crow.group(1)) - secs(crow.group(3)) == 7200
               and secs(crow.group(2)) - secs(crow.group(3)) == 10800
               and "SINUN AIKASI" in clicked.upper(),
-              clicked[:80])
+              ("missing " + ", ".join(missing)) if missing else clicked[:80])
+
+        # C1 < C2 < C3 < C4, with the partial phase running the best part of an
+        # hour either side rather than being a relabelled copy of totality.
+        check("11f2. the partial contacts bracket totality on every clock",
+              not missing
+              and all(c1[i] < c2[i] < c3[i] < c4[i] for i in range(3))
+              and all(c2[i] - c1[i] > 1800 and c4[i] - c3[i] > 1800
+                      for i in range(3)),
+              "C1..C4 UTC %s" % ([hms(c[2]) for c in (c1, c2, c3, c4)]
+                                 if not missing else "n/a"))
         hctx.close()
         cctx.close()
 

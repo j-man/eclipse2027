@@ -572,6 +572,15 @@ body.playing #play .ico-pause { display: block; }
   #eclipse-menu { max-height: min(50vh, 320px); }
   #eclipse-menu .row { padding: 7px 8px; }
 
+  /* A popup answers what the user just tapped, and on a phone it opens under
+     the card — it cannot be raised over it, because Leaflet draws popups
+     inside the map pane and that pane's own stacking context caps them, and it
+     cannot be panned clear, because a click must not move the map. So the card
+     stands aside for as long as the popup is up. Nothing is lost: the popup
+     says everything the card was saying and more, and closing it (the ×, or a
+     tap elsewhere) brings the card straight back. Portrait width only. */
+  body.popup-open #title { display: none; }
+
   /* Narrow enough and the attribution wraps across the whole bottom edge, so
      the badge moves to the top-left corner, on the strip above the card. */
   #version { top: 0; bottom: auto; }
