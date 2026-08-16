@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 12;
+  var VERSION = 13;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from

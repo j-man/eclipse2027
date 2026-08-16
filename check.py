@@ -34,6 +34,10 @@ SHOTS = {
                     "eclipse.map.fire('click',{latlng:L.latLng(26.55,31.45)});"),
     "west-end": "eclipse.map.setView([31,-40],5); eclipse.setTime(30320);",
     "east-end": "eclipse.map.setView([-10,84],5); eclipse.setTime(42400);",
+    # A polar track that crosses the antimeridian: the limits and the duration
+    # contours here used to be thrown thousands of kilometres off the path by
+    # the terminus solver, drawing a wedge from the Arctic down to Mongolia.
+    "alaska-2033": "eclipse.select('2033-03-30');",
 }
 
 results = []
@@ -955,8 +959,9 @@ def main():
                 page.goto(URL)
                 page.wait_for_function("window.eclipse !== undefined")
                 page.wait_for_timeout(1500)
-                # Every scripted shot but the default-view one frames 2027.
-                if name not in ("overview", "default-view"):
+                # Scripted shots frame 2027 unless they pick an eclipse
+                # themselves, which they say by calling eclipse.select.
+                if js and "eclipse.select(" not in js:
                     page.evaluate("eclipse.select('2027-08-02')")
                     page.wait_for_function(
                         "eclipse.data.meta.date === '2027-08-02'", timeout=15000)

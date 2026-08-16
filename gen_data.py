@@ -32,6 +32,7 @@ Output:
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import time as _time
@@ -64,6 +65,25 @@ LOCAL_PAD_S = 9000.0         # ...2.5 h either side of the umbra's transit
 DUR_WIN_S = 420.0            # totality never exceeds ~7.5 minutes
 DUR_STEP_S = 5.0
 N_OFFSET = 121               # cross-track samples per centre-line point
+
+# How far either side of the centre line the cross-track profile is sampled.
+# `reach` blows up at the ends of the track, where the umbra degenerates into a
+# smear along the terminator, and an unbounded span costs twice: the sampled
+# line grows long enough to cut the path of totality somewhere else entirely,
+# and N_OFFSET samples spread over it get too coarse to place a limit at all
+# (at span 5000 km the spacing is 83 km, on a path half a degree wide).
+# Observed half-widths over the catalogue run 30-600 km, so this is generous.
+MAX_HALF_WIDTH_KM = 1200.0
+
+# Validation thresholds for the finished geometry (see validate_geometry).
+# Latitude is the discriminator because it is physically bounded: over the 56
+# datasets that generate cleanly the largest step between consecutive points in
+# any polyline is 9.1 deg, while the three that were broken hit 15.2, 45.5 and
+# 106.6. Longitude is deliberately not thresholded on its own — a polar track
+# legitimately sweeps tens of degrees of longitude per frame. The distance cap
+# is a coarse backstop for gross breakage (clean maximum is 2140 km).
+MAX_STEP_LAT_DEG = 12.0
+MAX_STEP_KM = 4000.0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -346,9 +366,25 @@ def cross(level, offs, dur):
     to one sample spacing.  When the outer neighbour is that hard zero, the edge
     is extrapolated from the last two samples still inside instead, where the
     sqrt law actually holds.
+
+    The walk starts from the umbra sitting under *this* frame — the local
+    maximum reached by climbing from offset 0 — rather than from the tallest
+    point anywhere on the sampled line.  Near the ends of the track the centre
+    is only grazing, its own totality lasts a second or two, and the cross-track
+    line is long enough to cut the deep part of the path elsewhere.  Anchoring
+    on the global maximum then walks outward from that unrelated patch and
+    returns a "limit" thousands of kilometres off the path: that is what put a
+    north-limit point at lat 37 on the 2033-03-30 track, which runs 58-86 N.
     """
     out = [None, None]
-    i0 = int(np.argmax(dur))
+    i0 = int(np.argmin(np.abs(offs)))
+    while True:
+        if i0 + 1 < dur.size and dur[i0 + 1] > dur[i0]:
+            i0 += 1
+        elif i0 > 0 and dur[i0 - 1] > dur[i0]:
+            i0 -= 1
+        else:
+            break
     if dur[i0] <= level:
         return out
     for side in (1, 0):
@@ -368,6 +404,16 @@ def cross(level, offs, dur):
                 out[side] = offs[i] + (d1 - level ** 2) / (d1 - d2) * (offs[j] - offs[i])
             else:
                 out[side] = offs[i]
+            # The crossing is bracketed by construction: dur[i] is above the
+            # level and dur[j] is at or below it, so the edge lies between the
+            # two samples.  The extrapolation above can leave that bracket by a
+            # long way when the profile flattens out near the edge — a nearly
+            # zero slope sends it to infinity — and an unclamped result is a
+            # limit point placed thousands of kilometres off the path.  On the
+            # 2033-03-30 track it returned 5446 km from a window sampled only
+            # to 1200 km, which is the wedge that reached Mongolia.
+            lo_, hi_ = (offs[i], offs[j]) if offs[j] >= offs[i] else (offs[j], offs[i])
+            out[side] = float(min(max(out[side], lo_), hi_))
             break
     return out
 
@@ -470,7 +516,7 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
     contours = {lv: ([], []) for lv in DUR_LEVELS_S}
 
     for i, fr in enumerate(frames):
-        span = max(fr["reach"] * 1.6, 60.0)
+        span = min(max(fr["reach"] * 1.6, 60.0), MAX_HALF_WIDTH_KM)
         offs = np.linspace(-span, span, N_OFFSET)
         # positive offset = to the left of travel = north side of the path
         pla, plo = destination(clat[i], clon[i], brg[i] - 90.0, offs)
@@ -574,6 +620,70 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
     h = git_short_hash()
     if h:
         payload["meta"]["git"] = h
+    validate_geometry(payload)
+    return payload
+
+
+# ------------------------------------------------------------- phase 5: checks
+
+class GeometryError(Exception):
+    """Generated geometry that must not be written out."""
+
+
+def _step_km(a, b):
+    p1, p2 = math.radians(a[0]), math.radians(b[0])
+    dl = math.radians(b[1] - a[1])
+    c = (math.sin(p1) * math.sin(p2)
+         + math.cos(p1) * math.cos(p2) * math.cos(dl))
+    return R_EARTH_KM * math.acos(max(-1.0, min(1.0, c)))
+
+
+def polylines(payload):
+    """Every ordered point sequence in a payload, by name."""
+    out = {}
+    for side in ("center", "north", "south"):
+        out[f"path.{side}"] = payload["path"].get(side) or []
+    for lv, c in (payload.get("contours") or {}).items():
+        for side in ("north", "south"):
+            out[f"contours.{lv}.{side}"] = (c or {}).get(side) or []
+    for i, f in enumerate(payload.get("umbra") or []):
+        out[f"umbra[{i}].poly"] = f["poly"]
+    return out
+
+
+def validate_geometry(payload):
+    """Refuse to write a track that jumps between consecutive points.
+
+    The solver that places the path limits and duration contours can fail near
+    the ends of the track, where the umbra degenerates and the cross-track
+    profile stops being a clean single hump.  When it does, it does not fail
+    loudly — it returns a point somewhere else on Earth, and the map draws a
+    line to it.  Three of the 59 catalogued eclipses shipped with exactly that
+    defect (a north-limit point at lat 37 on a track confined to 58-86 N, drawn
+    as a wedge from the Arctic to Mongolia).
+
+    Checking the finished geometry catches the whole class at generation time,
+    whatever the solver does next, so it cannot reach the page again.
+    """
+    date = payload["meta"]["date"]
+    bad = []
+    for name, seq in polylines(payload).items():
+        for i in range(len(seq) - 1):
+            a, b = seq[i], seq[i + 1]
+            dlat = abs(b[0] - a[0])
+            if dlat > MAX_STEP_LAT_DEG:
+                bad.append(f"{name}[{i}]->[{i + 1}]: latitude jumps {dlat:.1f} deg "
+                           f"({a[0]:.3f} -> {b[0]:.3f}), limit {MAX_STEP_LAT_DEG:.0f}")
+            km = _step_km(a, b)
+            if km > MAX_STEP_KM:
+                bad.append(f"{name}[{i}]->[{i + 1}]: {km:.0f} km apart "
+                           f"({a[0]:.3f},{a[1]:.3f} -> {b[0]:.3f},{b[1]:.3f}), "
+                           f"limit {MAX_STEP_KM:.0f}")
+    if bad:
+        shown = "\n    ".join(bad[:8])
+        more = f"\n    ... and {len(bad) - 8} more" if len(bad) > 8 else ""
+        raise GeometryError(f"{date}: {len(bad)} implausible step(s) in the "
+                            f"generated geometry:\n    {shown}{more}")
     return payload
 
 

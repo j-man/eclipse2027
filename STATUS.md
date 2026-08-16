@@ -418,6 +418,52 @@ vasten, aurinko horisontin yläpuolella — joten mikään ei ole esilaskettua
 ruudukkoa. Helsinki 2026-08-12: magnitudi 0,833 klo 17:52:42 UTC, aurinko 2,4°
 korkeudella, ja se laskee ennen pimennyksen loppua. v12.
 
+### TASK 13 — radan päiden mahdottomat pisteet (valmis)
+
+2033-03-30 piirtyi kartalle kiilana, joka työntyi Jäämereltä Mongoliaan asti.
+Vika ei ollut päivämääräraja, vaikka siltä näytti: datassa ei ole yhtäkään yli
+180 asteen pituusloikkaa, sillä `near_branch` purkaa pituudet jatkuviksi jo
+generoitaessa. Vika oli `cross`-funktiossa.
+
+`cross` etsii kohdan, jossa kestoprofiili leikkaa halutun tason, ja
+ekstrapoloi reunan kahdesta viimeisestä sisäpuolisesta näytteestä, koska kesto
+käyttäytyy reunalla neliöjuuren tavoin. Radan päissä umbra on enää viiste
+terminaattoria pitkin, profiili litistyy, kulmakerroin menee lähelle nollaa ja
+ekstrapolaatio karkaa. Se palautti 5446 km ikkunasta, jota oli näytteistetty
+vain 1200 km:iin — eli rajapisteen tuhansien kilometrien päähän radalta,
+leveyspiirille 37 astetta radalla, joka kulkee 58–86°N.
+
+Leikkauskohta on rakenteeltaan kahden näytteen välissä: `dur[i]` on tason
+yläpuolella ja `dur[j]` sen alapuolella. Tulos rajataan nyt tähän väliin.
+Lisäksi profiilin kävely alkaa siitä umbrasta, joka on tämän ruudun alla
+(paikallinen maksimi nollasiirtymästä lähtien) eikä koko näytteistetyn viivan
+korkeimmasta kohdasta, ja poikkisuuntainen näytteistys on katkaistu 1200
+kilometriin — havaitut puolileveydet ovat 30–600 km, ja rajaamaton ikkuna
+harvensi näytevälin 83 kilometriin puolen asteen levyisellä radalla.
+
+Sama vika oli kolmessa pimennyksessä 59:stä: 2033-03-30, 2003-11-23 ja
+2021-12-04. Kaikki kolme on generoitu uudelleen ja kaikkien leveyspiirit ovat
+nyt radan omissa rajoissa (2033: 58,1–86,2°N). Regressio: 2026-08-12 ja
+2027-08-02 generoitiin myös uudelleen — keskilinja ja umbran kehät pisteelleen
+samat, rajaviivoista muuttui 3/94 ja 18/205 pistettä radan äärimmäisissä
+päissä enintään 22 km, mikä on juuri se korjaus jota haettiin. check.py 94/94.
+
+`gen_data.py` tarkistaa nyt valmiin geometrian ennen kirjoittamista
+(`validate_geometry`): peräkkäisten pisteiden leveysero saa olla enintään 12
+astetta ja etäisyys 4000 km. Leveyspiiri on mittari siksi, että se on
+fysikaalisesti rajattu — 56 puhtaassa datatiedostossa suurin askel on 9,1
+astetta, kolmessa rikkinäisessä 15,2, 45,5 ja 106,6. Pituuspiirille ei voi
+asettaa vastaavaa rajaa, koska napojen lähellä rata pyyhkäisee kymmeniä
+asteita ruutua kohti. Tarkistus kaataa generoinnin sen sijaan että päästäisi
+tällaisen datan sivulle, ja kaikki 59 tiedostoa läpäisevät sen. `check.py`
+ottaa uuden kuvan `alaska-2033`. v13.
+
+**2050-05-20 ei korjaantunut, eikä tämä muutos koske sitä.** Sen rata on yhä
+9 ruutua ja 8 sekuntia: `axis_scan` pitää vain `total`-pisteet, joten
+hybridipimennyksen rengasmaiset osuudet jäävät kokonaan pois ja jäljelle jää
+se hetki, jona umbra oikeasti koskettaa maata. Lyhyt punainen totaliteetti
+keltaisin rengasmaisin päin vaatii rengasmaisen radan tuen — oma työnsä.
+
 ## Tiedostot
 
 ```
