@@ -487,9 +487,14 @@ näytteistetään toisistaan riippumatta eivätkä ole välttämättä yhtä pit
 (2033: 51 ja 49 pistettä), joten vanha `north.concat(south.reverse())`
 pariutti eri kohdat keskenään.
 
-Umbra jätettiin häivyttämättä. Se on animaatio, se kertoo missä varjo juuri
-nyt on, ja se on yksi umpinainen kuvio — venytettynäkin siisti, ei
-sahalaitainen. Rata häviää sen alta, varjo kulkee loppuun.
+Umbra häivytetään samalla rampilla. Ehdotin sen jättämistä näkyviin — se on
+yksi umpinainen kuvio, venytettynäkin siisti — mutta jimbo kumosi: "animaatio
+on tarpeeton, viivat kertovat kaiken". Se on yksi joka ruudulla uudelleen
+piirtyvä taso eikä joukko staattisia, joten läpinäkyvyyttä ei kvantisoida —
+varjo liukenee portaattomasti — ja ohjaavana lukuna on kehän äärimmäinen
+leveyspiiri, sama "heikompi pää voittaa" -sääntö kuin staattisella
+geometrialla. Kokonaan arktisella osuudella toisto päättyy tyhjään karttaan,
+mikä on hyväksytty.
 
 **2026-08-12 muuttuu, toisin kuin tiketissä oletettiin.** Sen rata yltää
 89,1 asteeseen: 217 pistettä 618:sta on häivytysalueella ja 112 katoaa
@@ -497,7 +502,20 @@ kokonaan. Kartan yläreunaan asti suihkunnut viivaviuhka on poissa ja
 jäljelle jää puhdas nauha Grönlannista Islannin kautta Espanjaan — juuri se
 mitä tiketti haki, mutta oletuspimennys näyttää nyt erilaiselta.
 2027-08-02 ei muutu: sen suurin leveys on 36,8 astetta, joten jokainen
-häivytyskerroin on tasan 1. check.py 94/94. v14.
+häivytyskerroin on tasan 1. check.py 94/94. v15.
+
+**Tunnettu säätövara: rampin rajat.** `FADE_FROM` ja `FADE_TO` ovat 72 ja 80.
+2026-08-12:n totaliteetti ylittää Pohjois-Grönlannin noin 76–78 asteella eli
+rampin sisällä, joten se osuus piirtyy hyvin haaleana (Qaanaaq on 77,5
+asteella). Rajojen siirto 78:aan ja 86:een pitäisi Pohjois-Grönlannin
+luettavana ja veisi silti pahimman sotkun sekä 2033:sta että 2026:sta. Jimbo
+jätti tämän myöhemmäksi — rajat pysyvät toistaiseksi 72–80. Muutos on kahden
+vakion muutos, ei muuta.
+
+Kuvakaappauksia ei voi käyttää pikselintarkkaan regressiotestiin: `check.py
+--shots` ajettuna kahdesti samalla koodilla tuotti 7 eri tavustoa 17:stä,
+koska karttalaattojen latausajoitus vaihtelee. 2027:n regressio nojaa siksi
+rakenteeseen (suurin leveys 36,8 < 72) ja check.py:n väitteisiin.
 
 ## Tiedostot
 

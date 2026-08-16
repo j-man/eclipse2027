@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 14;
+  var VERSION = 15;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -407,6 +407,26 @@
     });
   }
 
+  // The shadow itself goes on the same ramp. It is one layer redrawn every
+  // frame rather than a set of static ones, so its opacity is not quantised —
+  // it dissolves smoothly — and it is driven by the outline's most extreme
+  // point, the same "weakest end wins" rule the static geometry uses. Playback
+  // over a wholly arctic stretch therefore ends in an empty map, which is the
+  // point: above FADE_TO there is nothing to see but projection artefacts.
+  var UMBRA_STYLE = { opacity: 0.55, fillOpacity: 0.62 };
+
+  function fadeUmbra(ring) {
+    var worst = 0;
+    for (var i = 0; i < ring.length; i++) {
+      var a = Math.abs(ring[i][0]);
+      if (a > worst) worst = a;
+    }
+    var f = fadeAt(worst);
+    umbra.setStyle({ opacity: UMBRA_STYLE.opacity * f,
+                     fillOpacity: UMBRA_STYLE.fillOpacity * f });
+    umbraDot.setStyle({ opacity: f, fillOpacity: f });
+  }
+
   // The limits are sampled independently and need not be the same length, so
   // the band between them is walked by position along each line rather than by
   // index, and emitted as one ribbon per fade level.
@@ -486,13 +506,15 @@
     });
 
     umbra = add(L.polygon([frames[0].poly], {
-      pane: 'umbra', color: '#cfe4ff', weight: 1, opacity: 0.55,
-      fillColor: '#000308', fillOpacity: 0.62, interactive: false
+      pane: 'umbra', color: '#cfe4ff', weight: 1, interactive: false,
+      opacity: UMBRA_STYLE.opacity, fillColor: '#000308',
+      fillOpacity: UMBRA_STYLE.fillOpacity
     }));
     umbraDot = add(L.circleMarker(frames[0].c, {
       pane: 'umbra', radius: 2.6, color: '#ffd24a', weight: 1.4,
       fillColor: '#ffd24a', fillOpacity: 1, interactive: false
     }));
+    fadeUmbra(frames[0].poly);
 
     // Dots only, no permanent labels: six of the 2027 sites sit within 200 km
     // of each other and any always-on text turns to mush when zoomed out.
@@ -683,6 +705,7 @@
     var s = shapeAt(now);
     umbra.setLatLngs([s.ring]);
     umbraDot.setLatLng(s.centre);
+    fadeUmbra(s.ring);
     renderClock();
     if (!fromSlider) el.slider.value = now;
     el.slider.style.setProperty('--fill', ((now - t0) / (t1 - t0) * 100) + '%');
