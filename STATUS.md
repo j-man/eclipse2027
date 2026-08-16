@@ -517,6 +517,50 @@ Kuvakaappauksia ei voi käyttää pikselintarkkaan regressiotestiin: `check.py
 koska karttalaattojen latausajoitus vaihtelee. 2027:n regressio nojaa siksi
 rakenteeseen (suurin leveys 36,8 < 72) ja check.py:n väitteisiin.
 
+### TASK 15 — hybridipimennysten rengasmaiset osuudet (valmis)
+
+2050-05-20 näkyi tynkänä: 9 ruutua, 8 sekuntia, pari irrallista viivanpätkää.
+Arvelin tämän johtuvan siitä että `axis_scan` heittää `annular`-pisteet pois.
+Se on totta mutta ei ollut syy. Oikea syy oli ikkunan romahdus.
+
+`coarse_scan` haravoi päivän 1 asteen ruudukolla 300 sekunnin välein. Pieni
+umbra osuu ruutupisteeseen sattumalta, ja 2050:n kohdalla se osui tasan
+kerran. Silloin `coarse_s[-1] - coarse_s[0]` on nolla, hienon vaiheen askel
+puolitetaan alarajaansa ja koko `fine_s`-ikkunaksi jää 7,5 sekuntia. `track`
+ei pysähtynyt fysiikkaan vaan ikkunaan: rataa ei koskaan katsottu pidemmälle.
+`axis_scan` oli olemassa juuri tätä varten, mutta sitä kutsuttiin vain jos
+ruudukko ei löytänyt *mitään*. Yksi osuma riitti estämään sen.
+
+Nyt: jos ruudukon kattama jänne on enintään yhden ruutuaskeleen mittainen,
+ruudukko ei ole ratkaissut rataa, ja seurataan akselia. 2050 on 9 ruudun
+sijaan 94 ja 8 sekunnin sijaan 1,55 tuntia — yhtenäinen kaari Tyynenmeren yli.
+
+Sen päälle rengasmaiset osuudet. Hybridin varjokartio yltää maahan radan
+keskiosalla ja jää siitä lyhyeksi molemmissa päissä; siellä maata koskettaa
+antumbra ja pimennys on rengasmainen. Nämä pätkät ovat samaa keskilinjaa,
+mutta koko umbraputki nojaa positiiviseen umbramarginaaliin, jota
+rengasmaisella pimennyksellä ei määritelmän mukaan ole, joten ne haetaan
+erikseen (`annular_runs`) ja tallennetaan omana `path.annular`-listanaan.
+Avain kirjoitetaan vain jos pätkiä on, joten puhtaasti täydellisten
+pimennysten tiedostot pysyvät tavulleen ennallaan.
+
+Kartalla ne piirtyvät meripihkan värisinä katkoviivoina, jotka on liitetty
+lähempään päähän täydellistä osuutta, joten rata luetaan yhtenä viivana eikä
+kolmena. Tooltip sanoo "rengasmainen tällä osuudella". Häivytys koskee näitä
+kuten muutakin geometriaa.
+
+Tiketti odotti "lyhyt punainen keskiosa, keltaiset päät". Oikealla datalla
+suhde on päinvastainen: täydellinen osuus kestää 1,55 h ja rengasmaiset päät
+noin 5 ja 8 minuuttia. Kartalla päät näyttävät silti pitkiltä, koska antumbra
+kiitää auringonnousun ja -laskun rajalla.
+
+Koko luettelo generoitiin uudelleen: 59/59 läpäisee tarkistuksen. Muista kuin
+2050:stä muuttui vain kourallinen rajapisteitä 0,1–4,7 km — TASK 13:n korjaus,
+joka silloin ajettiin vain viiteen tiedostoon ja osui nyt loppuihin 53:een.
+Keskilinjat ovat pisteelleen samat. 2026-08-12 ja 2027-08-02 ovat tavulleen
+ennallaan `meta.git`-leimaa lukuun ottamatta. check.py 94/94, uusi kuva
+`hybrid-2050`. v16.
+
 ## Tiedostot
 
 ```

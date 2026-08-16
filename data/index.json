@@ -476,11 +476,11 @@
    "date": "2050-05-20",
    "type": "hybrid",
    "greatest_utc": "20:41:42",
-   "greatest_lat": -41.964,
-   "greatest_lon": -131.0323,
-   "max_duration_s": 21.6,
+   "greatest_lat": -40.2486,
+   "greatest_lon": -124.6611,
+   "max_duration_s": 23.7,
    "regions": "Pacific",
-   "frames": 9
+   "frames": 94
   },
   {
    "date": "2052-03-30",
@@ -593,6 +593,6 @@
    "frames": 123
   }
  ],
- "total_bytes": 12839529,
+ "total_bytes": 12973130,
  "default": "2026-08-12"
 }

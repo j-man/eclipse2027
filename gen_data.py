@@ -85,6 +85,13 @@ MAX_HALF_WIDTH_KM = 1200.0
 MAX_STEP_LAT_DEG = 12.0
 MAX_STEP_KM = 4000.0
 
+# How far either side of the total section to look for annular stretches, and
+# how finely. A hybrid's annular ends are minutes long where its total section
+# is hours, so the sampling has to be finer than the frame cadence to catch
+# them at all; the padding is generous because the ends are what we are after.
+ANNULAR_PAD_S = 5400.0
+ANNULAR_STEP_S = 20.0
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # name, lat, lon, IANA time zone.
@@ -418,6 +425,54 @@ def cross(level, offs, dur):
     return out
 
 
+def annular_runs(t_midnight, sec_from, sec_to, step_s, ref_lon):
+    """Central-line stretches where the eclipse is annular rather than total.
+
+    A hybrid's shadow cone reaches the ground over the middle of its path and
+    falls short of it at either end; where it falls short the antumbra touches
+    instead and the eclipse is annular. Those stretches belong to the same
+    central line as the total section — the shadow does not stop and restart —
+    but nothing else here can see them, because the whole umbra pipeline is
+    built on a positive umbra margin, which is exactly what an annular eclipse
+    does not have.
+
+    Returned as a list of runs, each a list of (sec, lat, lon), so a track that
+    is annular at both ends comes back as two pieces rather than one line with
+    a jump through the total section in the middle.
+    """
+    sec = np.arange(sec_from, sec_to + 1e-9, step_s)
+    if sec.size < 2:
+        return []
+    t = ts.tt_jd(t_midnight.tt + sec / 86400.0)
+    S, M = sun_moon_geocentric(t)
+    P, total, annular, _ad = classify(S, M)
+    on = np.where(annular & ~total)[0]
+    if not on.size:
+        return []
+    lat, lon = geodetic(P[:, on], t[on])
+    lat, lon = np.atleast_1d(lat), np.atleast_1d(lon)
+
+    runs, cur, prev = [], [], None
+    for k, i in enumerate(on):
+        if prev is not None and i - prev > 1:      # a gap: the total section
+            if len(cur) > 1:
+                runs.append(cur)
+            cur = []
+        cur.append((float(sec[i]), float(lat[k]), float(lon[k])))
+        prev = i
+    if len(cur) > 1:
+        runs.append(cur)
+
+    # Same continuous-longitude treatment the rest of the path gets, so an
+    # annular end that crosses the antimeridian stays in one piece.
+    out = []
+    for run in runs:
+        lons = np.degrees(np.unwrap(np.radians([p[2] for p in run])))
+        lons = lons + 360.0 * np.round((ref_lon - lons[0]) / 360.0)
+        out.append([(p[0], p[1], float(lo)) for p, lo in zip(run, lons)])
+    return out
+
+
 def dist_to_path_km(limit_n, limit_s, lat, lon):
     """Great-circle distance to the nearer edge of the path of totality.
 
@@ -463,6 +518,21 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
             coarse_hits = axis_scan(t_midnight, h * 3600 + m * 60 + s)
     if not coarse_hits:
         return None
+
+    # A small umbra can clip the 1 deg / 300 s grid once and never again, which
+    # leaves a "central path" one instant long. The fine window is sized from
+    # that span, so it collapses to a few seconds and the track stops before it
+    # has started — 2050-05-20 came out as 9 frames over 8 s of a path that
+    # really runs an hour and a half. A span no longer than one grid step means
+    # the grid has not resolved the path, so follow the axis instead, which
+    # samples it directly rather than hoping it lands on a grid point.
+    if coarse_hits[-1][0] - coarse_hits[0][0] <= COARSE_STEP_S:
+        deepest = max(coarse_hits, key=lambda h: h[3])
+        axis_hits = axis_scan(t_midnight, deepest[0])
+        if len(axis_hits) > len(coarse_hits):
+            say(f"  phase 1: grid caught {len(coarse_hits)} instant(s), "
+                f"axis scan resolves {len(axis_hits)}")
+            coarse_hits = axis_hits
 
     coarse_s = np.array([h[0] for h in coarse_hits])
     coarse_clat = np.array([h[1] for h in coarse_hits])
@@ -617,6 +687,18 @@ def generate(date, markers=(), verbose=True, coarse_hits=None, seed_utc=None):
         # the same geometry eclipse_core uses.
         "local": local_block,
     }
+    # Hybrids only: a purely total eclipse has no annular stretch, the key is
+    # absent, and its dataset is byte for byte what it was before.
+    ann = annular_runs(t_midnight, frames[0]["s"] - ANNULAR_PAD_S,
+                       frames[-1]["s"] + ANNULAR_PAD_S,
+                       min(step, ANNULAR_STEP_S), clon[0])
+    if ann:
+        payload["path"]["annular"] = [
+            [[r(p[1], 4), r(p[2], 4), hhmmss(p[0])] for p in run] for run in ann
+        ]
+        say(f"  hybrid: {len(ann)} annular stretch(es), "
+            f"{sum(len(x) for x in ann)} points")
+
     h = git_short_hash()
     if h:
         payload["meta"]["git"] = h
@@ -643,6 +725,8 @@ def polylines(payload):
     out = {}
     for side in ("center", "north", "south"):
         out[f"path.{side}"] = payload["path"].get(side) or []
+    for i, run in enumerate(payload["path"].get("annular") or []):
+        out[f"path.annular[{i}]"] = run
     for lv, c in (payload.get("contours") or {}).items():
         for side in ("north", "south"):
             out[f"contours.{lv}.{side}"] = (c or {}).get(side) or []

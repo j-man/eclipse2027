@@ -38,6 +38,8 @@ SHOTS = {
     # contours here used to be thrown thousands of kilometres off the path by
     # the terminus solver, drawing a wedge from the Arctic down to Mongolia.
     "alaska-2033": "eclipse.select('2033-03-30');",
+    # A hybrid: amber dashed annular ends either side of the total section.
+    "hybrid-2050": "eclipse.select('2050-05-20');",
 }
 
 results = []

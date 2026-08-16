@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 15;
+  var VERSION = 16;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -68,6 +68,12 @@
   }
 
   function wrapLon(lon) { return ((lon + 540) % 360) - 180; }
+
+  // Squared separation in degrees; only ever used to compare two candidates.
+  function near2(a, b) {
+    var dy = a[0] - b[0], dx = a[1] - b[1];
+    return dy * dy + dx * dx;
+  }
 
   // -- local time ----------------------------------------------------------
   //
@@ -501,8 +507,30 @@
       });
     });
 
-    addFadedLine(centre.map(function (p) { return [p[0], p[1]]; }), {
+    var centrePts = centre.map(function (p) { return [p[0], p[1]]; });
+    addFadedLine(centrePts, {
       color: '#ff4b3e', weight: 1.5, opacity: 0.95, interactive: false
+    });
+
+    // A hybrid's central line runs on past the total section at both ends, with
+    // the antumbra on the ground instead of the umbra. Same line, different
+    // eclipse: amber rather than red, and dashed, because there is no totality
+    // to be had along it. Each stretch is joined to the nearer end of the total
+    // section so the track reads as one continuous path rather than three.
+    (d.path.annular || []).forEach(function (run) {
+      var pts = run.map(function (p) { return [p[0], p[1]]; });
+      var last = centrePts[centrePts.length - 1];
+      if (near2(pts[pts.length - 1], centrePts[0]) <= near2(pts[0], last)) {
+        pts.push(centrePts[0]);
+      } else {
+        pts.unshift(last);
+      }
+      fadeRuns(pts).forEach(function (piece) {
+        add(L.polyline(piece.pts, {
+          color: '#ffb03a', weight: 1.5, opacity: 0.9 * piece.f,
+          dashArray: '5 4'
+        }).bindTooltip('rengasmainen tällä osuudella', { sticky: true }));
+      });
     });
 
     umbra = add(L.polygon([frames[0].poly], {
