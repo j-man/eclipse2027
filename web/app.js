@@ -389,7 +389,9 @@
   var SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
   var SEARCH_PAUSE_MS = 800;
   var SEARCH_LIMIT = 5;
-  var SEARCH_ZOOM_MAX = 12;
+  var SEARCH_ZOOM_MAX = 11;   // never a street map: the band is the subject
+  var SEARCH_ZOOM_MIN = 3;
+  var SEARCH_ZOOM_FAR = 6;    // a place the shadow never reaches: country level
 
   var searchTimer = null, searchSeq = 0, searchCache = {};
 
@@ -413,17 +415,53 @@
     return isFinite(lat) && isFinite(lon) ? [lat, wrapLon(lon)] : null;
   }
 
-  // A town should fill the window; a whole country should not be zoomed into
-  // its centre. Nominatim gives a box, so the box decides, capped so that
-  // picking "Egypti" does not land on one street in Cairo.
+  // How wide the band of totality is where it passes closest to a point, and
+  // how far the point is from its centre line. Both in kilometres.
+  function bandNear(lat, lon) {
+    var path = data && data.path;
+    if (!path || !path.center || !path.center.length) return null;
+    var centre = path.center, north = path.north || [], south = path.south || [];
+    var kx = Math.cos(lat * Math.PI / 180);
+    var best = 0, bestD2 = Infinity;
+    for (var i = 0; i < centre.length; i++) {
+      var dy = centre[i][0] - lat;
+      var dx = wrapLon(centre[i][1] - lon) * kx;
+      var d2 = dy * dy + dx * dx;
+      if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    var edge = north[best] || south[best];
+    if (!edge) return null;
+    var ey = edge[0] - centre[best][0];
+    var ex = wrapLon(edge[1] - centre[best][1]) * Math.cos(centre[best][0] * Math.PI / 180);
+    return { half: Math.hypot(ey, ex) * 111.195,
+             away: Math.sqrt(bestD2) * 111.195 };
+  }
+
+  // The zoom a found place is shown at.
+  //
+  // Not the tightest zoom the place itself would allow: someone searching for a
+  // town wants to see whether the shadow comes anywhere near it, and a street
+  // map answers a question nobody asked. So when the band passes close by, the
+  // zoom is chosen to make the band about half the window wide — near enough to
+  // read the town, wide enough to see the band across it. A place nowhere near
+  // the track gets a plain regional view instead, since framing a band that is
+  // two thousand kilometres away would only send the map somewhere else.
   function placeZoom(result) {
-    var box = result && result.boundingbox;
-    if (!box || box.length < 4) return SEARCH_ZOOM_MAX - 1;
-    var south = parseFloat(box[0]), north = parseFloat(box[1]);
-    var west = parseFloat(box[2]), east = parseFloat(box[3]);
-    if (![south, north, west, east].every(isFinite)) return SEARCH_ZOOM_MAX - 1;
-    var zoom = map.getBoundsZoom(L.latLngBounds([south, west], [north, east]));
-    return Math.max(2, Math.min(SEARCH_ZOOM_MAX, zoom));
+    var at = placeLatLng(result);
+    if (!at) return SEARCH_ZOOM_FAR;
+    var band = bandNear(at[0], at[1]);
+    if (!band || !band.half) return SEARCH_ZOOM_FAR;
+    // Near enough to be worth framing: inside the band, or within about a
+    // band's width of it.
+    if (band.away > band.half * 3) return SEARCH_ZOOM_FAR;
+    // Straight from the width of the window rather than through a fitted box:
+    // getBoundsZoom fits a square, so the shorter side of the window decides
+    // and the result is floored, which landed a step or two too wide.
+    var wantMetresPerPixel = band.half * 2 * 1000 / (map.getSize().x * 0.5);
+    var zoom = Math.log2(156543.03392 * Math.cos(at[0] * Math.PI / 180)
+                         / wantMetresPerPixel);
+    return Math.max(SEARCH_ZOOM_MIN,
+                    Math.min(SEARCH_ZOOM_MAX, Math.round(zoom)));
   }
 
   // Going to a found place is the same act as clicking it: the map moves, and
@@ -494,7 +532,12 @@
         // the map underneath.
         L.DomEvent.disableClickPropagation(box);
         L.DomEvent.disableScrollPropagation(box);
-        L.DomEvent.on(box, 'keydown mousedown dblclick', L.DomEvent.stopPropagation);
+        // 'click' explicitly as well as the rest: without it the click that
+        // picks a result carries on to the map underneath and opens a second
+        // popup wherever the pointer happened to be — over the search box, at
+        // the old view — which then sits on top of the one we meant.
+        L.DomEvent.on(box, 'click keydown mousedown dblclick',
+                      L.DomEvent.stopPropagation);
 
         el.search = box;
         el.searchField = field;

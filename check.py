@@ -1398,14 +1398,48 @@ def main():
         page.wait_for_timeout(900)
         views = page.evaluate("window.__views")
         popup = page.query_selector(".click-popup")
-        check("15f. picking a place moves the map there with a sensible zoom",
-              len(views) == 1 and abs(views[0][0] - 25.6989) < 0.01
-              and 6 <= views[0][1] <= 12,
+        check("15f. picking a place moves the map there",
+              len(views) == 1 and abs(views[0][0] - 25.6989) < 0.01,
               "setView %s" % views)
-        check("15g. and it reports the eclipse there, as a map click would",
-              popup is not None and "Osittainen" in popup.inner_text()
+
+        # The zoom frames the band rather than the street. Luxor sits under the
+        # 2027 track, so the band should end up filling roughly half the window;
+        # a place the shadow never reaches gets a plain regional view instead.
+        near_zoom = page.evaluate(
+            "r => eclipse.placeZoom(r)", FOUND[0])
+        far_zoom = page.evaluate(
+            "r => eclipse.placeZoom(r)",
+            {"display_name": "Helsinki", "lat": "60.1699", "lon": "24.9384"})
+        band = page.evaluate(
+            "() => { const c = eclipse.data.path.center, n = eclipse.data.path.north;"
+            "  let best = 0, bd = Infinity;"
+            "  for (let i = 0; i < c.length; i++) {"
+            "    const dy = c[i][0] - 25.6989, dx = (c[i][1] - 32.6421) * Math.cos(25.7 * Math.PI / 180);"
+            "    const d = dy * dy + dx * dx; if (d < bd) { bd = d; best = i; } }"
+            "  const dy = n[best][0] - c[best][0];"
+            "  const dx = (n[best][1] - c[best][1]) * Math.cos(c[best][0] * Math.PI / 180);"
+            "  return Math.hypot(dy, dx) * 111.195 * 2; }")
+        # metres per pixel at this latitude and zoom, times the window width
+        span_km = page.evaluate(
+            "z => 156543.03392 * Math.cos(25.6989 * Math.PI / 180)"
+            " / Math.pow(2, z) * eclipse.map.getSize().x / 1000", near_zoom)
+        share = band / span_km
+        check("15g. the zoom frames the band, about half the window wide",
+              0.3 <= share <= 0.75,
+              "band %.0f km of %.0f km across at zoom %s (%.0f%%)"
+              % (band, span_km, near_zoom, share * 100))
+        check("15h. a place the shadow never reaches gets a regional view",
+              far_zoom < near_zoom and 4 <= far_zoom <= 7,
+              "Helsinki zoom %s vs Luxor %s" % (far_zoom, near_zoom))
+
+        # And the popup is the map's own, at the place that was searched for —
+        # not one opened by the click carrying on to the map underneath.
+        check("15i. and it reports the eclipse there, as a map click would",
+              popup is not None
+              and "25.699" in popup.inner_text() and "32.642" in popup.inner_text()
+              and "6 min" in popup.inner_text()
               and page.query_selector(".leaflet-popup-content .eta") is not None,
-              (" ".join(popup.inner_text().split())[:70]) if popup else "no popup")
+              (" ".join(popup.inner_text().split())[:80]) if popup else "no popup")
 
         # Both quiet failures say so under the field rather than anywhere louder.
         page.evaluate("""() => { window.fetch = function () {
@@ -1421,7 +1455,7 @@ def main():
         page.press("#search-field", "Enter")
         page.wait_for_timeout(600)
         broken = (page.text_content("#search-note") or "").strip()
-        check("15h. nothing found, and a broken network, both say so quietly",
+        check("15j. nothing found, and a broken network, both say so quietly",
               empty == "ei tuloksia" and "verkko poikki" in broken
               and page.evaluate("document.querySelector('#search-hits').hidden"),
               "%r / %r" % (empty, broken))

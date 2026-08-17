@@ -807,14 +807,30 @@ pimennyslista tulee — testi 7h kaatui tähän — joten laatikko väistyy niin
 kauan kuin lista on auki. Sama kauppa jonka kortti tekee avoimen popupin
 kanssa TASK 17:ssä: yksi päällekkäinen kerrallaan.
 
-check.py 15a–15h: kenttä on kartalla, pyyntö on Nominatimin dokumentoimassa
+Zoomi ei ole paikan oma tiukin taso vaan sellainen jolla nauha näkyy noin
+puolet ruudun leveydestä, kun rata kulkee paikan lähellä (enintään kolmen
+puolileveyden päässä keskilinjasta); muuten seudullinen yleiskuva, koska
+kahden tuhannen kilometrin päässä olevan nauhan rajaaminen veisi kartan
+muualle. Zoomi lasketaan suoraan ikkunan leveydestä: ensin kokeilin
+getBoundsZoom'ia neliörajauksella, mutta se sovittaa lyhyemmän sivun mukaan ja
+pyöristää alas, jolloin nauha jäi 16 %:iin ruudusta. Nyt Luxor 66 %, Helsinki
+seudullinen 6.
+
+check.py 15a–15j: kenttä on kartalla, pyyntö on Nominatimin dokumentoimassa
 muodossa, viisi näppäinpainallusta ei lähetä yhtään pyyntöä, tauko lähettää
 tasan yhden, tulokset listautuvat nimenä ja maana, valinta kutsuu setView'n
 oikeaan pisteeseen järkevällä zoomilla, popup ilmestyy kuten klikkauksesta, ja
 molemmat hiljaiset virhetilat sanovat itsensä. Verkkoa ei kosketa: vastaus on
 mockattu, joten testiajo ei ole netistä kiinni eikä kuluta kenenkään muun
 pyyntökiintiötä. 7k vartioi ettei laatikko peitä korttia pystyasennossa.
-121/121. v25.
+
+Yksi vika löytyi vasta kun tarkistus kiristettiin. Tuloksen klikkaus jatkoi
+kartalle asti ja avasi toisen popupin siihen mihin osoitin sattui olemaan —
+hakulaatikon kohdalle, vanhassa näkymässä — ja se jäi päällimmäiseksi. Luxoria
+haettaessa popup väitti 48°N 99°E. `disableClickPropagation` ei yksin riitä;
+'click' pysäytetään nyt nimeltä muiden mukana. Tarkistus 15i vaatii nyt että
+popupissa lukevat haetun paikan koordinaatit eikä vain että popup on olemassa
+— vanha muotoilu meni läpi väärästä syystä. 123/123. v25.
 
 ## Tiedostot
 
