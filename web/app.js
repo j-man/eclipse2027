@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 24;
+  var VERSION = 25;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -378,6 +378,195 @@
     };
   }
 
+  // -- place search ----------------------------------------------------------
+  //
+  // Nominatim, straight from the browser: no key, and no server of ours in the
+  // middle. Their terms ask for restraint rather than registration, so this
+  // asks once per finished thought — on Enter, or 800 ms after the typing stops
+  // — never per keystroke, keeps one request in flight at a time, and remembers
+  // what it has already asked so the same word is not looked up twice.
+
+  var SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
+  var SEARCH_PAUSE_MS = 800;
+  var SEARCH_LIMIT = 5;
+  var SEARCH_ZOOM_MAX = 12;
+
+  var searchTimer = null, searchSeq = 0, searchCache = {};
+
+  function searchUrl(query) {
+    return SEARCH_URL + '?format=json&limit=' + SEARCH_LIMIT +
+           '&q=' + encodeURIComponent(query);
+  }
+
+  // "Luxor, Egypti" — the first part of the display name, and the last, which
+  // is the country. The middle is administrative detail nobody is reading.
+  function placeName(result) {
+    var whole = String((result && result.display_name) || '').split(',');
+    var head = (whole[0] || '').trim();
+    var tail = whole.length > 1 ? whole[whole.length - 1].trim() : '';
+    return tail && tail !== head ? head + ', ' + tail : head;
+  }
+
+  function placeLatLng(result) {
+    var lat = parseFloat(result && result.lat);
+    var lon = parseFloat(result && result.lon);
+    return isFinite(lat) && isFinite(lon) ? [lat, wrapLon(lon)] : null;
+  }
+
+  // A town should fill the window; a whole country should not be zoomed into
+  // its centre. Nominatim gives a box, so the box decides, capped so that
+  // picking "Egypti" does not land on one street in Cairo.
+  function placeZoom(result) {
+    var box = result && result.boundingbox;
+    if (!box || box.length < 4) return SEARCH_ZOOM_MAX - 1;
+    var south = parseFloat(box[0]), north = parseFloat(box[1]);
+    var west = parseFloat(box[2]), east = parseFloat(box[3]);
+    if (![south, north, west, east].every(isFinite)) return SEARCH_ZOOM_MAX - 1;
+    var zoom = map.getBoundsZoom(L.latLngBounds([south, west], [north, east]));
+    return Math.max(2, Math.min(SEARCH_ZOOM_MAX, zoom));
+  }
+
+  // Going to a found place is the same act as clicking it: the map moves, and
+  // then the click handler is fired at that point so the popup, the clock and
+  // the countdown all come from the one code path they always did.
+  function showPlace(result) {
+    var at = placeLatLng(result);
+    if (!at) return null;
+    map.setView(at, placeZoom(result));
+    map.fire('click', { latlng: L.latLng(at[0], at[1]) });
+    return at;
+  }
+
+  function searchNow(query) {
+    query = String(query || '').trim();
+    if (!query) return Promise.resolve([]);
+    if (searchCache[query]) return Promise.resolve(searchCache[query]);
+    if (typeof window.fetch !== 'function') {
+      return Promise.reject(new Error('selain ei osaa hakea'));
+    }
+    var mine = ++searchSeq;
+    return window.fetch(searchUrl(query), { cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (list) {
+        var found = (Array.isArray(list) ? list : []).filter(placeLatLng);
+        searchCache[query] = found;
+        // A slower answer to an older question is not the answer on screen.
+        if (mine !== searchSeq) return null;
+        return found;
+      });
+  }
+
+  // The control itself. Built by hand rather than with a form element: a form
+  // on a Leaflet map wants to submit and reload the page, and there is nothing
+  // to submit to.
+  function addSearchControl() {
+    var Search = L.Control.extend({
+      onAdd: function () {
+        var box = L.DomUtil.create('div', 'search');
+        box.id = 'search';
+        var field = L.DomUtil.create('input', 'search-field', box);
+        field.id = 'search-field';
+        field.type = 'text';
+        field.autocomplete = 'off';
+        field.spellcheck = false;
+        field.placeholder = 'etsi paikka';
+        field.setAttribute('aria-label', 'etsi paikka');
+        var list = L.DomUtil.create('div', 'search-hits', box);
+        list.id = 'search-hits';
+        list.hidden = true;
+        var note = L.DomUtil.create('p', 'search-note', box);
+        note.id = 'search-note';
+        note.hidden = true;
+
+        // The results are OpenStreetMap's data and are credited next to them.
+        // Not in the map attribution: that line is already at the width the
+        // window can hold, and on a narrow screen it is ellipsised — a credit
+        // that can be cut off is not a credit.
+        var from = L.DomUtil.create('p', 'search-from', box);
+        from.id = 'search-from';
+        from.innerHTML = 'haku &copy; <a href="https://openstreetmap.org/copyright"' +
+                         ' target="_blank" rel="noopener">OpenStreetMap</a>';
+
+        // Typing in it must not pan the map, and a click in it must not land on
+        // the map underneath.
+        L.DomEvent.disableClickPropagation(box);
+        L.DomEvent.disableScrollPropagation(box);
+        L.DomEvent.on(box, 'keydown mousedown dblclick', L.DomEvent.stopPropagation);
+
+        el.search = box;
+        el.searchField = field;
+        el.searchHits = list;
+        el.searchNote = note;
+        return box;
+      },
+    });
+    new Search({ position: 'topright' }).addTo(map);
+    wireSearch();
+  }
+
+  function sayNothing(text) {
+    el.searchHits.hidden = true;
+    el.searchHits.textContent = '';
+    el.searchNote.hidden = !text;
+    el.searchNote.textContent = text || '';
+  }
+
+  function drawHits(results) {
+    el.searchHits.textContent = '';
+    if (!results.length) {
+      sayNothing('ei tuloksia');
+      return;
+    }
+    el.searchNote.hidden = true;
+    results.forEach(function (result) {
+      var hit = document.createElement('button');
+      hit.type = 'button';
+      hit.className = 'search-hit';
+      hit.textContent = placeName(result);
+      hit.onclick = function () {
+        el.searchField.value = placeName(result);
+        sayNothing('');
+        showPlace(result);
+      };
+      el.searchHits.appendChild(hit);
+    });
+    el.searchHits.hidden = false;
+  }
+
+  function runSearch(query) {
+    if (!String(query || '').trim()) { sayNothing(''); return Promise.resolve(); }
+    el.searchNote.hidden = false;
+    el.searchNote.textContent = 'etsitään…';
+    return searchNow(query).then(function (results) {
+      if (results === null) return;          // a newer search has taken over
+      drawHits(results);
+    }).catch(function (err) {
+      sayNothing('haku ei onnistunut: ' + ((err && err.message) || err));
+    });
+  }
+
+  function wireSearch() {
+    var field = el.searchField;
+    field.addEventListener('input', function () {
+      if (searchTimer) clearTimeout(searchTimer);
+      var query = field.value;
+      if (!query.trim()) { sayNothing(''); return; }
+      searchTimer = setTimeout(function () { runSearch(query); }, SEARCH_PAUSE_MS);
+    });
+    field.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        if (searchTimer) clearTimeout(searchTimer);
+        runSearch(field.value);
+      } else if (e.key === 'Escape') {
+        field.value = '';
+        sayNothing('');
+      }
+    });
+  }
+
   // -- rendering -----------------------------------------------------------
 
   function clearEclipse() {
@@ -708,6 +897,9 @@
   function openMenu() {
     if (menuOpen) return;
     menuOpen = true;
+    // The list and the search box are both overlays hanging from the top of a
+    // phone screen, and there is only room for one; see the mobile rules.
+    document.body.classList.add('menu-open');
     el.menu.hidden = false;
     el.card.setAttribute('aria-expanded', 'true');
     stopPulse();
@@ -718,6 +910,7 @@
   function closeMenu() {
     if (!menuOpen) return;
     menuOpen = false;
+    document.body.classList.remove('menu-open');
     el.menu.hidden = true;
     el.card.setAttribute('aria-expanded', 'false');
   }
@@ -1007,6 +1200,7 @@
       minZoom: 2, maxZoom: 17, attributionControl: true
     });
     L.control.zoom({ position: 'topright' }).addTo(map);
+    addSearchControl();
 
     L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -1219,7 +1413,16 @@
       // Which eclipse a given day (and a given address) would open on. Exposed
       // so the choice can be checked for any date without moving the clock.
       startDate: function (today, asked) { return startDate(catalog, today, asked); },
-      today: todayISO
+      today: todayISO,
+      // Place search, for scripted checks: the request it would make, how it
+      // reads a result, and going to one without waiting on the network.
+      searchUrl: searchUrl,
+      searchNow: searchNow,
+      runSearch: runSearch,
+      placeName: placeName,
+      placeZoom: placeZoom,
+      showPlace: showPlace,
+      searchPause: function () { return SEARCH_PAUSE_MS; }
     };
 
     maybePulse();

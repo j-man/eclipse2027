@@ -577,7 +577,7 @@ def main():
         # The credit line is as long as it is; on a narrow screen it wraps to
         # two lines across the whole bottom edge and lands on the play button.
         # Measured at the same three sizes, after the same click.
-        buried = []
+        buried, crowded = [], []
         for w, h in PORTRAIT:
             page.set_viewport_size({"width": w, "height": h})
             page.reload()
@@ -593,7 +593,19 @@ def main():
                 "  return [q.left, q.top, q.right, q.bottom]; };"
                 "  return {attr: r('.leaflet-control-attribution'),"
                 "          controls: r('#controls'), slider: r('#slider'),"
-                "          play: r('#play'), clock: r('#clock')}; }")
+                "          play: r('#play'), clock: r('#clock'),"
+                "          search: r('#search'), card: r('#eclipse-card')}; }")
+            # The card spans the width on a phone, so the search box has to drop
+            # below it rather than sit over its right-hand end.
+            box, card = boxes["search"], boxes["card"]
+            if box is None:
+                crowded.append(size + " (no search box)")
+            else:
+                if box[0] < 0 or box[2] > w or box[3] > h:
+                    crowded.append(size + " (search off screen)")
+                if (card and box[0] < card[2] and card[0] < box[2]
+                        and box[1] < card[3] and card[1] < box[3]):
+                    crowded.append(size + " (search over the card)")
             attr = boxes["attr"]
             if attr is None:
                 buried.append(size + " (no attribution at all)")
@@ -611,6 +623,9 @@ def main():
         check("7j. the attribution never sits on the controls in portrait",
               not buried,
               "; ".join(buried) or "one line, clear of the bar at all three sizes")
+        check("7k. the search box drops below the card rather than over it",
+              not crowded,
+              "; ".join(crowded) or "clear of the card at all three sizes")
 
         page.set_viewport_size({"width": 1440, "height": 900})
         page.reload()
@@ -1302,6 +1317,115 @@ def main():
         check("14d. the shadow keeps an edge to read its shape by",
               umbra["edge"] >= 0.6 and umbra["weight"] >= 1.2,
               "outline opacity %s, weight %s" % (umbra["edge"], umbra["weight"]))
+
+        # 15. the place search
+        #
+        # Nominatim is never actually called: the answer is mocked, so the suite
+        # neither depends on the network nor spends anyone else's request budget
+        # on a test run. What is checked is the request the page *would* send,
+        # the restraint it shows in sending it, and what it does with an answer.
+        FOUND = [
+            {"display_name": "Luxor, Luxor Governorate, Egypt",
+             "lat": "25.6989", "lon": "32.6421",
+             "boundingbox": ["25.62", "25.75", "32.58", "32.72"]},
+            {"display_name": "Luxor, Las Vegas, Nevada, United States",
+             "lat": "36.0955", "lon": "-115.1761",
+             "boundingbox": ["36.09", "36.10", "-115.18", "-115.17"]},
+        ]
+        page.evaluate("eclipse.map.closePopup(); eclipse.map.setView([26,20],4)")
+        page.wait_for_timeout(400)
+
+        field = page.query_selector("#search-field")
+        check("15a. there is a search field on the map",
+              field is not None
+              and page.evaluate("!!document.querySelector('.leaflet-control-container"
+                                " #search-field')")
+              and page.evaluate(
+                  "document.querySelector('#search-field').placeholder") != "",
+              page.evaluate("document.querySelector('#search-field')"
+                            " && document.querySelector('#search-field').placeholder"))
+
+        asked = page.evaluate("eclipse.searchUrl('Luxor, Egypti')")
+        check("15b. it asks Nominatim the documented way",
+              asked.startswith("https://nominatim.openstreetmap.org/search?")
+              and "format=json" in asked and "limit=5" in asked
+              and "q=Luxor%2C%20Egypti" in asked,
+              asked)
+
+        # Restraint: typing is not a search. Nothing goes out until Enter, or
+        # until the typing has stopped for the whole pause.
+        page.evaluate("""(found) => {
+          window.__asked = [];
+          window.__realFetch = window.fetch;
+          window.fetch = function (url) {
+            window.__asked.push(String(url));
+            return Promise.resolve({ok: true, status: 200,
+                                    json: function () { return Promise.resolve(found); }});
+          };
+        }""", FOUND)
+        pause = page.evaluate("eclipse.searchPause()")
+        page.fill("#search-field", "")
+        for text in ("L", "Lu", "Lux", "Luxo", "Luxor"):
+            page.evaluate("t => { const f = document.querySelector('#search-field');"
+                          " f.value = t;"
+                          " f.dispatchEvent(new Event('input', {bubbles: true})); }", text)
+            page.wait_for_timeout(60)
+        typed = page.evaluate("window.__asked.length")
+        check("15c. typing does not send a request per keystroke",
+              pause >= 800 and typed == 0,
+              "%d requests after five keystrokes, pause %s ms" % (typed, pause))
+
+        page.wait_for_timeout(pause + 600)
+        check("15d. a pause in the typing is what sends it",
+              page.evaluate("window.__asked.length") == 1,
+              "%d request(s)" % page.evaluate("window.__asked.length"))
+
+        hits = page.evaluate(
+            "[...document.querySelectorAll('.search-hit')].map(h => h.textContent)")
+        check("15e. the answers are listed by place and country",
+              hits == ["Luxor, Egypt", "Luxor, United States"], str(hits))
+
+        # Picking one is the same act as clicking that spot on the map.
+        page.evaluate("""() => {
+          window.__views = [];
+          const real = eclipse.map.setView.bind(eclipse.map);
+          eclipse.map.setView = function (c, z, o) {
+            window.__views.push([c.lat === undefined ? c[0] : c.lat, z]);
+            return real(c, z, o);
+          };
+        }""")
+        page.click(".search-hit")
+        page.wait_for_timeout(900)
+        views = page.evaluate("window.__views")
+        popup = page.query_selector(".click-popup")
+        check("15f. picking a place moves the map there with a sensible zoom",
+              len(views) == 1 and abs(views[0][0] - 25.6989) < 0.01
+              and 6 <= views[0][1] <= 12,
+              "setView %s" % views)
+        check("15g. and it reports the eclipse there, as a map click would",
+              popup is not None and "Osittainen" in popup.inner_text()
+              and page.query_selector(".leaflet-popup-content .eta") is not None,
+              (" ".join(popup.inner_text().split())[:70]) if popup else "no popup")
+
+        # Both quiet failures say so under the field rather than anywhere louder.
+        page.evaluate("""() => { window.fetch = function () {
+          return Promise.resolve({ok: true, status: 200,
+                                  json: function () { return Promise.resolve([]); }}); }; }""")
+        page.fill("#search-field", "Fnordheim")
+        page.press("#search-field", "Enter")
+        page.wait_for_timeout(600)
+        empty = (page.text_content("#search-note") or "").strip()
+        page.evaluate("""() => { window.fetch = function () {
+          return Promise.reject(new Error('verkko poikki')); }; }""")
+        page.fill("#search-field", "Toinen")
+        page.press("#search-field", "Enter")
+        page.wait_for_timeout(600)
+        broken = (page.text_content("#search-note") or "").strip()
+        check("15h. nothing found, and a broken network, both say so quietly",
+              empty == "ei tuloksia" and "verkko poikki" in broken
+              and page.evaluate("document.querySelector('#search-hits').hidden"),
+              "%r / %r" % (empty, broken))
+        page.evaluate("() => { window.fetch = window.__realFetch; }")
 
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",

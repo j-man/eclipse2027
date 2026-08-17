@@ -772,6 +772,50 @@ saastutettu, eikä kuvakirjastoa ole riippuvuutena. Molempiin suuntiin: vanhoill
 arvoilla kaikki neljä kaatuvat (yhteispeitto 0,78), uusilla menevät läpi.
 112/112. v24.
 
+### TASK 22 — paikkahaku kartalle (valmis)
+
+Kartan yläkulmaan Leaflet-kontrollina hakukenttä. Nominatim suoraan selaimesta,
+ei avainta eikä omaa palvelinta välissä.
+
+Käyttöehdot pyytävät hillintää, ei rekisteröitymistä, joten haku lähtee vasta
+valmiista ajatuksesta: Enterillä tai 800 ms tauon jälkeen, ei koskaan
+näppäintä kohti. Yksi pyyntö kerrallaan, ja vanhentuneen kysymyksen myöhässä
+saapuva vastaus hylätään sen sijaan että se piirtyisi uuden päälle. Jo kysytyt
+sanat muistetaan, joten samaa ei haeta kahdesti.
+
+Tulokset pudotuslistaan nimenä ja maana ("Luxor, Egypt"): Nominatimin
+display_name on pitkä hallinnollinen ketju, josta ensimmäinen ja viimeinen osa
+riittävät. Valinta kutsuu setView'n zoomilla joka tulee tuloksen
+rajauslaatikosta (getBoundsZoom, katto 12 — muuten "Egypti" laskeutuisi yhdelle
+Kairon kadulle) ja laukaisee sitten kartan oman klikkauksen samaan pisteeseen.
+Näin popup, kello, kortin kaaririvi ja laskuri tulevat siitä yhdestä
+koodipolusta josta ne ovat aina tulleet, eikä paikkahaku ole toinen tapa
+näyttää samat asiat.
+
+"Ei tuloksia" ja verkkovirhe kirjoittuvat pienenä rivinä kentän alle. Esc
+tyhjentää.
+
+OSM-krediitti on hakulaatikossa eikä kartan attribuutiorivillä. Kokeilin
+ensin jälkimmäistä ja 7d kaatui: pidempi rivi kietoutui kahdelle riville
+721–760 px leveydellä ja osui versiomerkkiin. Sitä paitsi TASK 19 typistää
+attribuutiorivin kolmella pisteellä kapealla näytöllä, ja krediitti jonka voi
+leikata pois ei ole krediitti.
+
+Puhelimessa kortti vie koko leveyden, joten hakulaatikko ei mahdu sen viereen
+vaan pudotettiin sen alle. Se taas on juuri se kohta johon avattu
+pimennyslista tulee — testi 7h kaatui tähän — joten laatikko väistyy niin
+kauan kuin lista on auki. Sama kauppa jonka kortti tekee avoimen popupin
+kanssa TASK 17:ssä: yksi päällekkäinen kerrallaan.
+
+check.py 15a–15h: kenttä on kartalla, pyyntö on Nominatimin dokumentoimassa
+muodossa, viisi näppäinpainallusta ei lähetä yhtään pyyntöä, tauko lähettää
+tasan yhden, tulokset listautuvat nimenä ja maana, valinta kutsuu setView'n
+oikeaan pisteeseen järkevällä zoomilla, popup ilmestyy kuten klikkauksesta, ja
+molemmat hiljaiset virhetilat sanovat itsensä. Verkkoa ei kosketa: vastaus on
+mockattu, joten testiajo ei ole netistä kiinni eikä kuluta kenenkään muun
+pyyntökiintiötä. 7k vartioi ettei laatikko peitä korttia pystyasennossa.
+121/121. v25.
+
 ## Tiedostot
 
 ```
