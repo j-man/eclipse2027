@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 22;
+  var VERSION = 23;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -68,6 +68,32 @@
   }
 
   function wrapLon(lon) { return ((lon + 540) % 360) - 180; }
+
+  // Today, as the catalogue writes its dates. From the reader's own clock, so
+  // "next" means next for whoever is looking rather than next at build time.
+  function todayISO() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  // Which eclipse the page should open on.
+  //
+  // The catalogue used to nominate one, and it was a fixed date: by this time
+  // next year the page opens on an eclipse that has already happened. So the
+  // choice is made from the clock instead — the first eclipse still to come.
+  // Once they have all been, the last one is the only sensible thing left to
+  // show. A date asked for in the address beats both, so a link to a particular
+  // eclipse keeps working forever.
+  function startDate(list, today, asked) {
+    var dates = (list || []).map(function (e) { return e.date; })
+                            .filter(Boolean).sort();
+    if (!dates.length) return FALLBACK_DATE;
+    var want = String(asked || '').replace(/^#/, '');
+    if (dates.indexOf(want) >= 0) return want;
+    for (var i = 0; i < dates.length; i++) {
+      if (dates[i] >= today) return dates[i];
+    }
+    return dates[dates.length - 1];
+  }
 
   // Squared separation in degrees; only ever used to compare two candidates.
   function near2(a, b) {
@@ -633,7 +659,7 @@
                                       max_duration_s: 0, regions: '' }];
 
     // "Next" is relative to whenever the page is opened, not to build time.
-    var today = new Date().toISOString().slice(0, 10);
+    var today = todayISO();
     var nextIdx = catalog.findIndex(function (e) { return e.date >= today; });
     var lastNearYear = parseInt(today.slice(0, 4), 10) + NEAR_TERM_YEARS;
 
@@ -721,9 +747,22 @@
     });
   }
 
+  // A picked eclipse goes into the address, so the view can be sent to someone
+  // and survives a reload. Replacing rather than pushing: the picker is not a
+  // history of everywhere you have looked.
+  function rememberInAddress(date) {
+    if (!window.history || !window.history.replaceState || !window.location) return;
+    try {
+      window.history.replaceState(null, '', '#' + date);
+    } catch (err) {
+      /* file:// in some browsers refuses; the page works without it */
+    }
+  }
+
   function selectEclipse(date) {
     pending = date;
     markSelected(date);
+    rememberInAddress(date);
     if (cache[date]) { showEclipse(cache[date]); return; }
     el.titleInfo.textContent = 'ladataan ' + date + '…';
     var s = document.createElement('script');
@@ -1168,15 +1207,20 @@
       etaText: etaText,
       etaLine: etaLine,
       etaPhases: function () { return etaPhases.slice(); },
-      nextPhase: nextPhase
+      nextPhase: nextPhase,
+      // Which eclipse a given day (and a given address) would open on. Exposed
+      // so the choice can be checked for any date without moving the clock.
+      startDate: function (today, asked) { return startDate(catalog, today, asked); },
+      today: todayISO
     };
 
     maybePulse();
-    var start = (window.ECLIPSE_INDEX && window.ECLIPSE_INDEX.default) ||
-                FALLBACK_DATE;
+    var start = startDate(catalog, todayISO(),
+                          window.location && window.location.hash);
     pending = start;
     if (window.ECLIPSE_DATA && window.ECLIPSE_DATA.meta.date === start) {
       cache[start] = window.ECLIPSE_DATA;
+      rememberInAddress(start);
       showEclipse(window.ECLIPSE_DATA);
     } else {
       if (window.ECLIPSE_DATA) {

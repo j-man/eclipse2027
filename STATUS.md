@@ -714,6 +714,37 @@ luettavissa. Molempiin suuntiin: edellisellä CSS:llä kaatuu kuudella
 päällekkäisyydellä (kontrollit ja play kaikilla kolmella koolla), tällä menee
 läpi. 107/107. v22.
 
+### TASK 20 — oletukseksi seuraava tuleva pimennys (valmis)
+
+Sivu avautui luettelon nimeämään pimennykseen (`index.default`), joka on
+generointihetkellä kiinnitetty päivämäärä. Se vanhenee: elokuussa 2026 sivu
+tervehti 2026-08-12:lla, joka oli jo mennyt. Valinta tehdään nyt lukijan omasta
+kellosta — ensimmäinen pimennys jonka päivä on tänään tai myöhemmin. Kun kaikki
+ovat menneet, jää viimeinen, koska muuta järkevää ei ole näytettävissä.
+
+Osoitteessa annettu päivä voittaa oletuksen, ja koska sellaista mekanismia ei
+ollut lainkaan, se tehtiin: `#2024-04-08` avaa sen pimennyksen, ja valinta
+kirjoitetaan osoitteeseen `replaceState`illa (ei pushState — valitsin ei ole
+historia siitä missä kaikkialla on käyty). Tuntematon fragmentti ei ole virhe
+vaan jätetään huomiotta, jolloin kello päättää. Näin linkki tiettyyn
+pimennykseen toimii ikuisesti, vaikka oletus liikkuu vuodesta toiseen.
+
+`buildMenu` laski jo saman "seuraavan" rivin merkitsemistä varten; nyt sekä se
+että avausvalinta lukevat saman `todayISO()`:n, eikä päivämäärää muodosteta
+kahdessa paikassa.
+
+Tarkistus 0 kirjoitettiin uudelleen. 0b vaatii että sivu avautuu seuraavaan
+tulevaan; 0c kysyy valitsijalta seitsemää eri päivää kelloa liikuttamatta
+(ennen kaikkia → ensimmäinen, päivää ennen 2027:ää → 2027, päivä itse → 2027,
+päivä jälkeen → 2028-07-22, kaikkien jälkeen → viimeinen, ja osoitteen
+voittavuus sekä roskafragmentin huomiotta jättäminen); 0d vaatii että
+`window.ECLIPSE_DATA` on yhä oikea pimennys, jotta `file://` toimii — se ei
+välttämättä ole enää sama kuin näytettävä, joten avaus voi hakea datan laiskasti.
+9c ei enää odota kiinteää "12. elokuuta 2026" vaan sitä pimennystä johon kello
+osui. Molempiin suuntiin: vanhalla avauslogiikalla 0b kaatuu juuri oireeseen
+("showing 2026-08-12, next after 2026-08-17 is 2027-08-02"), uudella menee
+läpi. 108/108. v23.
+
 ## Tiedostot
 
 ```

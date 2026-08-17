@@ -9,6 +9,7 @@ Needs playwright:  pip install playwright && playwright install chromium
 
 import json
 import math
+from datetime import datetime, timezone
 import re
 import os
 import sys
@@ -110,18 +111,49 @@ def main():
         page.wait_for_function("window.eclipse !== undefined", timeout=15000)
         page.wait_for_timeout(3000)
 
-        # 0. the page opens on the eclipse the catalogue nominates
+        # 0. the page opens on the next eclipse that has not happened yet
+        #
+        # It used to open on a date nominated in the catalogue, which is fixed
+        # at generation time and so goes stale: by the following year the page
+        # greeted everyone with an eclipse that had already been. The choice is
+        # made from the reader's own clock instead.
         cat0 = json.load(open(os.path.join(HERE, "data", "index.json")))
-        want_default = cat0.get("default")
-        check("0a. catalogue nominates a default eclipse",
-              want_default in {e["date"] for e in cat0["eclipses"]},
-              str(want_default))
-        check("0b. page opens on that eclipse, not on a hardcoded one",
+        dates = sorted(e["date"] for e in cat0["eclipses"])
+        today = page.evaluate("eclipse.today()")
+        want_default = next((d for d in dates if d >= today), dates[-1])
+        check("0a. the page agrees with this machine about what day it is",
+              today == datetime.now(timezone.utc).strftime("%Y-%m-%d"), today)
+        check("0b. page opens on the next eclipse still to come",
               page.evaluate("eclipse.data.meta.date") == want_default,
-              "showing " + page.evaluate("eclipse.data.meta.date"))
-        check("0c. its data was there for the first paint (no lazy fetch)",
+              "showing %s, next after %s is %s"
+              % (page.evaluate("eclipse.data.meta.date"), today, want_default))
+
+        # The same choice, for days other than today: the clock is not moved,
+        # the chooser is simply asked about a different date.
+        first, last = dates[0], dates[-1]
+        after_2027 = next(d for d in dates if d > "2027-08-02")
+        cases = {
+            ("1900-01-01", None): first,        # before them all
+            ("2027-08-01", None): "2027-08-02",  # the day before
+            ("2027-08-02", None): "2027-08-02",  # the day itself still counts
+            ("2027-08-03", None): after_2027,    # the day after moves on
+            ("2400-01-01", None): last,          # after them all
+            ("2027-08-01", "#2017-08-21"): "2017-08-21",   # the address wins
+            ("2027-08-01", "#not-a-date"): "2027-08-02",   # nonsense does not
+        }
+        wrong = []
+        for (day, asked), want in cases.items():
+            got = page.evaluate("([d, h]) => eclipse.startDate(d, h)", [day, asked])
+            if got != want:
+                wrong.append("%s%s -> %s, wanted %s"
+                             % (day, " " + asked if asked else "", got, want))
+        check("0c. and on any other day it picks the next one then",
+              not wrong, "; ".join(wrong) or "%d days checked" % len(cases))
+
+        check("0d. the eagerly loaded payload is a real eclipse, so file:// works",
               page.evaluate("!!window.ECLIPSE_DATA")
-              and page.evaluate("window.ECLIPSE_DATA.meta.date") == want_default)
+              and page.evaluate("window.ECLIPSE_DATA.meta.date") in set(dates),
+              page.evaluate("window.ECLIPSE_DATA && window.ECLIPSE_DATA.meta.date"))
 
         # Everything below examines the 2027 eclipse, which is no longer the
         # one on screen at start-up, so switch to it first.
@@ -644,12 +676,19 @@ def main():
         check("9b. no second entry point is left over",
               not page.evaluate("!!document.getElementById('picker')"),
               "the old standalone <select> is gone")
+        # Not a hardcoded date any more: whichever eclipse the clock opened on,
+        # the card has to name that one and give its place in the list.
+        FI_MONTHS = ["tammikuuta", "helmikuuta", "maaliskuuta", "huhtikuuta",
+                     "toukokuuta", "kesäkuuta", "heinäkuuta", "elokuuta",
+                     "syyskuuta", "lokakuuta", "marraskuuta", "joulukuuta"]
+        y, mo, d = (int(x) for x in want_default.split("-"))
+        want_title = "%d. %s %d" % (d, FI_MONTHS[mo - 1], y)
         check("9c. card names the eclipse on screen and its position",
-              page.text_content("#card-title") == "12. elokuuta 2026"
+              page.text_content("#card-title") == want_title
               and "/ %d" % len(rows) in page.text_content("#card-badge")
               and page.evaluate("eclipse.data.meta.date") == want_default,
               page.text_content("#card-title") + " · "
-              + page.text_content("#card-badge"))
+              + page.text_content("#card-badge") + " (wanted " + want_title + ")")
 
         # The trigger has to name the action, not just be clickable.
         check("9c2. trigger row is a signposted control",
