@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 23;
+  var VERSION = 24;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -445,7 +445,11 @@
   // point, the same "weakest end wins" rule the static geometry uses. Playback
   // over a wholly arctic stretch therefore ends in an empty map, which is the
   // point: above FADE_TO there is nothing to see but projection artefacts.
-  var UMBRA_STYLE = { opacity: 0.55, fillOpacity: 0.62 };
+  // The shadow reads as a shape from its outline as much as from its fill, so
+  // the fill is light enough to see the ground through and the edge carries the
+  // rest. It stacks on top of the band below it, and the two together used to
+  // come to 0.78 — under that, a city was a rumour.
+  var UMBRA_STYLE = { opacity: 0.75, fillOpacity: 0.34 };
 
   function fadeUmbra(ring) {
     var worst = 0;
@@ -503,7 +507,11 @@
     // The band between the two limits, as a ribbon that fades out to the north.
     addFadedBand(north, south, {
       pane: 'overlayPane', stroke: false,
-      fillColor: '#000913', fillOpacity: 0.42, interactive: false
+      // Light enough that roads and place names read straight through it: at
+      // city zoom the band fills the whole window, so anything heavier hides
+      // the very thing someone has zoomed in to find. The yellow limit lines
+      // drawn over it are what mark where the zone actually ends.
+      fillColor: '#0b1a2b', fillOpacity: 0.20, interactive: false
     });
 
     [north, south].forEach(function (line) {
@@ -560,7 +568,7 @@
     });
 
     umbra = add(L.polygon([frames[0].poly], {
-      pane: 'umbra', color: '#cfe4ff', weight: 1, interactive: false,
+      pane: 'umbra', color: '#cfe4ff', weight: 1.4, interactive: false,
       opacity: UMBRA_STYLE.opacity, fillColor: '#000308',
       fillOpacity: UMBRA_STYLE.fillOpacity
     }));

@@ -1264,6 +1264,45 @@ def main():
         check("13f. closing the popup takes the countdown with it",
               page.query_selector(".leaflet-popup-content .eta") is None)
 
+        # 14. the shading is dark enough to see and light enough to see through
+        #
+        # There was nothing pinning this, and it had drifted heavy enough that a
+        # city under the path was a rumour. The two layers stack — the static
+        # band, and the moving shadow on top of it — so the pair is what has to
+        # be checked, not either alone. Declared opacity rather than sampled
+        # pixels: the tiles come from another host, so a canvas read of them is
+        # tainted, and no image library is a dependency here.
+        page.evaluate("eclipse.map.closePopup(); eclipse.select('2027-08-02')")
+        page.wait_for_function("eclipse.data.meta.date === '2027-08-02'", timeout=15000)
+        page.wait_for_timeout(900)
+        page.evaluate("eclipse.setPlaying(false); eclipse.setTime(36300)")
+        page.wait_for_timeout(600)
+        shade = page.evaluate("""() => {
+          let band = null, umbra = null;
+          eclipse.map.eachLayer(l => { if (l instanceof L.Polygon) {
+            if (l.options.pane === 'umbra') umbra = umbra || l.options;
+            else band = band || l.options; } });
+          return {band: band && {op: band.fillOpacity, stroke: !!band.stroke},
+                  umbra: umbra && {op: umbra.fillOpacity, edge: umbra.opacity,
+                                   weight: umbra.weight}};
+        }""")
+        band, umbra = shade["band"], shade["umbra"]
+        check("14a. the path of totality is shaded, but lightly",
+              band is not None and 0.05 <= band["op"] <= 0.28,
+              "band fillOpacity %s" % (band and band["op"]))
+        check("14b. the moving shadow is darker than the band, still see-through",
+              umbra is not None and band is not None
+              and band["op"] < umbra["op"] <= 0.45,
+              "umbra fillOpacity %s vs band %s"
+              % (umbra and umbra["op"], band and band["op"]))
+        # 1 - (1-a)(1-b): what a point under both actually loses.
+        together = 1 - (1 - band["op"]) * (1 - umbra["op"])
+        check("14c. and the two together still leave the map readable",
+              together <= 0.5, "combined %.2f of the ground covered" % together)
+        check("14d. the shadow keeps an edge to read its shape by",
+              umbra["edge"] >= 0.6 and umbra["weight"] >= 1.2,
+              "outline opacity %s, weight %s" % (umbra["edge"], umbra["weight"]))
+
         # 5. generation cost is a property of gen_data.py, verified when it runs
         check("5. duration contours present",
               all(len(data["contours"][k]["north"]) > 10 for k in data["contours"]),

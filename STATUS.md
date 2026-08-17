@@ -745,6 +745,33 @@ osui. Molempiin suuntiin: vanhalla avauslogiikalla 0b kaatuu juuri oireeseen
 ("showing 2026-08-12, next after 2026-08-17 is 2027-08-02"), uudella menee
 läpi. 108/108. v23.
 
+### TASK 21 — vyöhykkeen tummuus kevennettiin (valmis)
+
+Loppukäyttäjä: totaliteettivyöhyke on niin tumma ettei pohjakartta erotu sen
+alta. Syy oli että kaksi kerrosta pinoutuu — paikallaan pysyvä vyöhyke ja sen
+päällä liikkuva varjo — eikä kumpaakaan ollut mitattu yhdessä:
+
+    vyöhyke 0,42 · varjo 0,62 → 1 - 0,58 × 0,38 = 0,78 maasta peitossa
+
+Luxorin kaupunkitasolla vyöhyke täyttää koko ikkunan, joten 78 % peitto vei
+juuri sen mitä katsomaan oli tultu. Nyt vyöhyke on 0,20 ja hieman sinisempi
+(#0b1a2b mustan sijaan), varjo 0,34, eli yhdessä 0,47. Tiet, Niili ja
+paikannimet luetaan läpi, ja kaukonäkymässä nauha erottuu yhä selvästi
+ympäristöstään — vyöhykkeen reunan merkitsevät keltaiset rajaviivat piirretään
+sen päälle kuten ennenkin.
+
+Varjo menetti täyttöä, joten se saa sen takaisin reunasta: ääriviivan
+läpinäkyvyys 0,55 → 0,75 ja paksuus 1 → 1,4. Muoto luetaan reunasta silloinkin
+kun täyttö on kevyt.
+
+check.py 14a–14d: vyöhyke on varjostettu mutta kevyesti (0,05–0,28), varjo on
+vyöhykettä tummempi mutta yhä läpinäkyvä (≤ 0,45), yhteispeitto ≤ 0,50, ja
+varjolla on luettava reuna. Ilmoitettuja arvoja eikä mitattuja pikseleitä:
+laatat tulevat toiselta palvelimelta, joten canvas-luku niistä olisi
+saastutettu, eikä kuvakirjastoa ole riippuvuutena. Molempiin suuntiin: vanhoilla
+arvoilla kaikki neljä kaatuvat (yhteispeitto 0,78), uusilla menevät läpi.
+112/112. v24.
+
 ## Tiedostot
 
 ```
