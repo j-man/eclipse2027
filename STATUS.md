@@ -832,6 +832,15 @@ haettaessa popup väitti 48°N 99°E. `disableClickPropagation` ei yksin riitä;
 popupissa lukevat haetun paikan koordinaatit eikä vain että popup on olemassa
 — vanha muotoilu meni läpi väärästä syystä. 123/123. v25.
 
+Vika raportoitiin viela erikseen sen jalkeen kun se oli korjattu, arvauksella
+etta `map.fire('click', {latlng})` saisi kursorin containerPointin latlng:n
+sijaan. Se ei pida paikkaansa: fire valittaa annetun latlng:n muuttumattomana,
+ja popup avautui oikein — sen paalle vain avautui heti toinen popup, jonka
+kartta itse avasi osoittimen kohdalle kun klikkaus jatkoi sinne asti. Lisattiin
+15i, joka kysyy popupilta itseltaan `getLatLng()`:n eika lue sen alaviitteeseen
+piirrettyja pyoristettyja koordinaatteja. Ilman propagaation pysaytysta se
+kaatuu ja kertoo popupin osuneen osoittimen kohdalle. 124/124.
+
 ## Tiedostot
 
 ```

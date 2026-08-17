@@ -1432,9 +1432,27 @@ def main():
               far_zoom < near_zoom and 4 <= far_zoom <= 7,
               "Helsinki zoom %s vs Luxor %s" % (far_zoom, near_zoom))
 
-        # And the popup is the map's own, at the place that was searched for —
-        # not one opened by the click carrying on to the map underneath.
-        check("15i. and it reports the eclipse there, as a map click would",
+        # And the popup is the map's own, at the place that was searched for.
+        #
+        # Its own latlng, not the coordinates printed in its footer: the footer
+        # is rounded for reading, and asking the popup where it thinks it is is
+        # the question. This is what the earlier version of the check missed —
+        # it asked only whether a popup existed and mentioned a partial eclipse,
+        # and both were true of the wrong popup, opened where the pointer was by
+        # the click carrying on to the map underneath.
+        where = page.evaluate("""() => {
+          let p = null;
+          eclipse.map.eachLayer(l => { if (l instanceof L.Popup) p = p || l; });
+          const q = p && p.getLatLng();
+          return q ? [q.lat, q.lng] : null;
+        }""")
+        check("15i. the popup opens at the searched coordinates, not at the pointer",
+              where is not None
+              and abs(where[0] - float(FOUND[0]["lat"])) < 1e-6
+              and abs(where[1] - float(FOUND[0]["lon"])) < 1e-6,
+              "popup at %s, searched %s"
+              % (where, [float(FOUND[0]["lat"]), float(FOUND[0]["lon"])]))
+        check("15j. and it reports the eclipse there, as a map click would",
               popup is not None
               and "25.699" in popup.inner_text() and "32.642" in popup.inner_text()
               and "6 min" in popup.inner_text()
@@ -1455,7 +1473,7 @@ def main():
         page.press("#search-field", "Enter")
         page.wait_for_timeout(600)
         broken = (page.text_content("#search-note") or "").strip()
-        check("15j. nothing found, and a broken network, both say so quietly",
+        check("15k. nothing found, and a broken network, both say so quietly",
               empty == "ei tuloksia" and "verkko poikki" in broken
               and page.evaluate("document.querySelector('#search-hits').hidden"),
               "%r / %r" % (empty, broken))
