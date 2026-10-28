@@ -73,6 +73,17 @@ location only to a page served over HTTPS or from `localhost` (a local
 `file://` page also works in Chrome); over plain HTTP from another machine
 the button can only explain that.
 
+**NYT** in the time bar is live mode: the map's clock becomes the real one,
+read from the device several times a second, so it runs at 1× and cannot
+drift, and the shadow is drawn where it actually is at that moment. Before the
+eclipse there is no shadow on the map and the line under the clock counts down
+to it ("alkaa … päästä"); after it, it says it is over; the moment the real time
+enters the eclipse the shadow appears by itself. The clock shows the chosen
+place's local time, or the device's own with no place chosen, with UTC under
+it. A click on the map while live picks a place without moving the clock.
+Moving the slider, changing the speed, the jump button, the arrow keys or play
+all go back to the simulated clock.
+
 Its cache is named after `VERSION` in `sw.js`, which has to equal `VERSION` in
 `app.js` (`check.py` fails otherwise): bumping both is what makes a release
 reach phones that already have the old one.

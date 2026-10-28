@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 28;
+  var VERSION = 29;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -1161,24 +1161,97 @@
   // With no place chosen the clock is plain UTC, as it was. Once the user picks
   // a point or a site it reads that place's wall clock, and the UTC value moves
   // into the line underneath rather than disappearing.
+  //
+  // In live mode the reading is the real instant, which before or after the
+  // eclipse lies outside the window the map can draw; and with no place
+  // chosen it is the device's own wall clock, with UTC underneath.
   function renderClock() {
-    el.utc.textContent = hms(now);
-    if (!place) {
-      el.time.textContent = hms(now);
+    var ms = live ? liveMs : instant(now);
+    var utcSec = live ? daySec(ms) : now;
+    var pl = place || (live ? viewerPlace() : null);
+    el.utc.textContent = hms(utcSec);
+    if (!pl) {
+      el.time.textContent = hms(utcSec);
       el.zone.textContent = 'UTC';
-      el.clockDay.textContent = dayLabel(instant(now));
+      el.clockDay.textContent = dayLabel(ms);
       el.utcWrap.hidden = true;
       el.clock.title = 'Klikkaa karttaa: kello vaihtuu paikalliseen aikaan';
       return;
     }
-    var st = TZ.stamp(place, instant(now));
+    var st = TZ.stamp(pl, ms);
     el.time.textContent = hms(st.localSec);
     el.zone.textContent = st.label;
     el.clockDay.textContent = dayLabel(st.localMs);
     el.utcWrap.hidden = false;
     el.clock.title = (st.exact
       ? st.zone + (st.abbr ? ' (' + st.abbr + ')' : '')
-      : 'vyöhyke arvioitu pituuspiiristä') + ' · ' + hms(now) + ' UTC';
+      : 'vyöhyke arvioitu pituuspiiristä') + ' · ' + hms(utcSec) + ' UTC';
+  }
+
+  function daySec(ms) { return ((ms / 1000) % 86400 + 86400) % 86400; }
+
+  // The device's own zone, or null when the browser will not name one.
+  function viewerPlace() {
+    var v = TZ.viewer();
+    return v.zone ? v : null;
+  }
+
+  // -- live: the map at the real time ----------------------------------------
+  //
+  // The clock is set from the device's own clock several times a second and so
+  // runs at 1x by construction; nothing is counted, so nothing drifts. Before
+  // the eclipse and after it there is no shadow on the Earth to draw: the map
+  // shows none, and the line under the clock counts down to the first contact
+  // or says it is over. The moment the real time enters the window the shadow
+  // appears by itself, because the next tick simply lands inside it.
+
+  var LIVE_TICK_MS = 250;
+  var live = false, liveTimer = null, liveMs = 0;
+
+  function liveWhen(ms) {
+    var sec = (ms - dayMs) / 1000;
+    return sec < t0 ? 'before' : (sec > t1 ? 'after' : 'during');
+  }
+
+  function liveStatus(ms) {
+    var when = liveWhen(ms);
+    if (when === 'before') return 'alkaa ' + etaText(instant(t0) - ms) + ' päästä';
+    if (when === 'after') return 'päättyi ' + fiDate(data.meta.date);
+    return 'varjo maan päällä nyt';
+  }
+
+  function showUmbra(on) {
+    if (on) { fadeUmbra(shapeAt(now).ring); return; }
+    umbra.setStyle({ opacity: 0, fillOpacity: 0 });
+    umbraDot.setStyle({ opacity: 0, fillOpacity: 0 });
+  }
+
+  function liveTick() {
+    if (!live || !data) return;
+    liveMs = Date.now();
+    var when = liveWhen(liveMs);
+    setTime(when === 'during' ? (liveMs - dayMs) / 1000 : (when === 'before' ? t0 : t1));
+    showUmbra(when === 'during');
+    renderClock();
+    el.liveStatus.textContent = liveStatus(liveMs);
+  }
+
+  function setLive(on) {
+    if (live === !!on) return;
+    live = !!on;
+    document.body.classList.toggle('live', live);
+    el.live.setAttribute('aria-pressed', live ? 'true' : 'false');
+    el.liveStatus.hidden = !live;
+    if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+    if (live) {
+      setPlaying(false);
+      el.speed.innerHTML = '1&times;';
+      liveTick();
+      liveTimer = setInterval(liveTick, LIVE_TICK_MS);
+    } else {
+      el.speed.innerHTML = SPEEDS[speedIdx] + '&times;';
+      if (data) setTime(now);       // the shadow back, wherever the slider is
+    }
   }
 
   function setPlace(p) {
@@ -1215,6 +1288,7 @@
   }
 
   function setPlaying(on) {
+    if (on) setLive(false);         // playback is the simulated clock again
     playing = on;
     document.body.classList.toggle('playing', on);
     last = 0;
@@ -1332,7 +1406,8 @@
   // -- start up ------------------------------------------------------------
 
   function init() {
-    ['slider', 'play', 'speed', 'jump', 'version', 'chev'].forEach(function (id) {
+    el.liveStatus = document.getElementById('live-status');
+    ['slider', 'play', 'speed', 'jump', 'live', 'version', 'chev'].forEach(function (id) {
       el[id] = document.getElementById(id);
     });
     el.time = document.getElementById('clock-time');
@@ -1408,10 +1483,15 @@
     // Controls.
     el.play.onclick = function () { setPlaying(!playing); };
     el.speed.onclick = function () {
+      // In live mode the button reads 1x; pressing it leaves live mode, then
+      // steps the speed as it always did.
+      setLive(false);
       speedIdx = (speedIdx + 1) % SPEEDS.length;
       el.speed.innerHTML = SPEEDS[speedIdx] + '&times;';
     };
+    el.live.onclick = function () { setLive(!live); };
     el.jump.onclick = function () {
+      setLive(false);
       var c = data.path.center, best = 0, bestD = -1;
       for (var i = 0; i < c.length; i++) {
         if (c[i][3] > bestD) { bestD = c[i][3]; best = i; }
@@ -1420,18 +1500,26 @@
       map.setView([c[best][0], c[best][1]], Math.max(map.getZoom(), 5));
     };
     el.slider.oninput = function () {
+      // Read first: leaving live mode puts the slider back at the live time,
+      // so it is then put back where it was dragged to.
+      var t = parseFloat(el.slider.value);
+      if (live) { setLive(false); el.slider.value = t; }
       setPlaying(false);
-      setTime(parseFloat(el.slider.value), true);
+      setTime(t, true);
     };
 
     map.on('click', function (e) {
       var lat = e.latlng.lat, lon = wrapLon(e.latlng.lng);
-      setPlaying(false);
       // The zone comes from the point on the ground, never from the browser:
       // the viewer may be in Finland reading times for Egypt.
       var pl = TZ.at(lat, lon);
       setPlace(pl);
-      setTime(closestApproach(lat, lon));
+      // Live, the clock stays real: the place only changes whose wall clock
+      // it reads in. Otherwise it jumps to the shadow's nearest moment.
+      if (!live) {
+        setPlaying(false);
+        setTime(closestApproach(lat, lon));
+      }
 
       var tot = totalityAt(lat, lon);
       var loc = circumstancesAt(lat, lon);
@@ -1543,8 +1631,8 @@
       if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
       if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
       if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
-      else if (e.key === 'ArrowRight') { setPlaying(false); setTime(now + stepS); }
-      else if (e.key === 'ArrowLeft') { setPlaying(false); setTime(now - stepS); }
+      else if (e.key === 'ArrowRight') { setLive(false); setPlaying(false); setTime(now + stepS); }
+      else if (e.key === 'ArrowLeft') { setLive(false); setPlaying(false); setTime(now - stepS); }
     });
 
     // Small handle for scripted checks and for poking at the map from a console.
@@ -1591,7 +1679,11 @@
       showLocation: showLocation,
       locateMessage: locateMessage,
       located: function () { return located; },
-      locateTimeout: function () { return LOCATE_TIMEOUT_MS; }
+      locateTimeout: function () { return LOCATE_TIMEOUT_MS; },
+      // Live mode, for scripted checks: on/off, and what it says right now.
+      setLive: setLive,
+      isLive: function () { return live; },
+      liveStatus: function () { return live ? liveStatus(liveMs) : null; }
     };
 
     maybePulse();

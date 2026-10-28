@@ -13,7 +13,7 @@
 
 'use strict';
 
-var VERSION = 28;
+var VERSION = 29;
 var CACHE = 'pimennykset-v' + VERSION;
 
 // Relative to this file, which lives in web/ beside index.html.

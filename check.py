@@ -412,6 +412,119 @@ def check_locate():
           and "localhost" in readme)
 
 
+UMBRA_SHOWN = """() => {
+  let shown = null;
+  eclipse.map.eachLayer(l => {
+    if (l instanceof L.Polygon && l.options.pane === 'umbra') shown = l.options.fillOpacity > 0;
+  });
+  return shown;
+}"""
+
+
+def check_live():
+    """18. Live mode: the map's clock is the real one and runs at 1x.
+
+    The page's own clock is Playwright's fake one, so "now" can be put before,
+    during and after the 2027 eclipse and moved on by exact amounts."""
+    utc = timezone.utc
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 1280, "height": 800},
+                                  timezone_id="Europe/Helsinki")
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.clock.install(time=datetime(2027, 8, 1, 12, 0, tzinfo=utc))
+        page.goto(URL)
+        page.wait_for_function("window.eclipse !== undefined && eclipse.data"
+                               " && eclipse.data.meta.date === '2027-08-02'", timeout=15000)
+        page.wait_for_timeout(1500)
+        page.evaluate("eclipse.setPlaying(false)")
+        start_s = page.evaluate("eclipse.data.meta.t_start_s")
+
+        def reading():
+            return page.evaluate("""() => ({
+              live: eclipse.isLive(), status: eclipse.liveStatus(), t: eclipse.time(),
+              time: document.getElementById('clock-time').textContent,
+              utc: document.getElementById('clock-utc').textContent,
+              zone: document.getElementById('clock-zone').textContent,
+              utcShown: !document.getElementById('clock-utc-wrap').hidden,
+              statusShown: !document.getElementById('live-status').hidden,
+              speed: document.getElementById('speed').textContent,
+              bodyLive: document.body.classList.contains('live')})""")
+
+        # the evening before: a countdown, no shadow, the real clock in both zones
+        page.clock.pause_at(datetime(2027, 8, 1, 18, 0, 0, tzinfo=utc))
+        page.click("#live")
+        page.clock.run_for(1000)
+        r = reading()
+        check("18a. before the eclipse: no shadow, and a countdown to it",
+              r["live"] and r["statusShown"] and r["status"].startswith("alkaa ")
+              and r["status"].endswith(" päästä") and "pv" not in r["status"]
+              and page.evaluate(UMBRA_SHOWN) is False,
+              "%r, shadow %s" % (r["status"], page.evaluate(UMBRA_SHOWN)))
+        check("18b. the clock reads the real time, local and UTC both",
+              r["utc"] == "18:00:01" and r["time"] == "21:00:01" and r["zone"] == "UTC+3"
+              and r["utcShown"] and r["speed"] == "1×",
+              "%s %s / %s UTC, speed %s" % (r["time"], r["zone"], r["utc"], r["speed"]))
+
+        # during: the shadow is where it really is, and moves at 1x
+        page.clock.pause_at(datetime(2027, 8, 2, 8, 49, 0, tzinfo=utc))
+        page.clock.run_for(1000)
+        first = reading()
+        want = 8 * 3600 + 49 * 60 + 1
+        check("18c. during it, the map's time is the real time and the shadow is drawn",
+              abs(first["t"] - want) < 0.5 and page.evaluate(UMBRA_SHOWN) is True
+              and first["status"] == "varjo maan päällä nyt",
+              "t=%.2f, want %d; %r" % (first["t"], want, first["status"]))
+        page.clock.run_for(60000)
+        later = reading()
+        check("18d. and it runs at 1x: a minute later, a minute on",
+              abs(later["t"] - first["t"] - 60) < 0.5, "%.2f s" % (later["t"] - first["t"]))
+
+        # picking a place while live changes the zone, not the time
+        page.evaluate("eclipse.map.fire('click', {latlng: L.latLng(25.7, 32.6)})")
+        at_click = page.evaluate("eclipse.time()")    # the clock is paused: no tick between
+        page.clock.run_for(1000)
+        placed = reading()
+        check("18e. a click while live keeps the real time and reads it in that place's zone",
+              placed["live"] and abs(at_click - later["t"]) < 0.01
+              and abs(placed["t"] - later["t"] - 1) < 0.5
+              and placed["zone"] == page.evaluate(
+                  "eclipse.stampAt(25.7, 32.6, eclipse.time()).label"),
+              "%s, t moved %.2f" % (placed["zone"], placed["t"] - later["t"]))
+
+        # after: over, and no shadow
+        page.clock.pause_at(datetime(2027, 8, 2, 20, 0, 0, tzinfo=utc))
+        page.clock.run_for(1000)
+        r = reading()
+        check("18f. after it: says it is over, no shadow",
+              r["status"].startswith("päättyi") and page.evaluate(UMBRA_SHOWN) is False,
+              r["status"])
+
+        # leaving live: the slider, the speed and play each end it
+        page.evaluate("""() => { const s = document.getElementById('slider');
+          s.value = String(%d); s.dispatchEvent(new Event('input')); }""" % (start_s + 600))
+        by_slider = reading()
+        by_slider["thumb"] = float(page.evaluate("document.getElementById('slider').value"))
+        page.click("#live")
+        page.click("#speed")
+        by_speed = reading()
+        page.click("#live")
+        page.click("#play")
+        by_play = reading()
+        check("18g. moving the slider, the speed or pressing play ends live mode",
+              not by_slider["live"] and not by_slider["bodyLive"] and not by_slider["statusShown"]
+              and abs(by_slider["t"] - (start_s + 600)) < 1 and page.evaluate(UMBRA_SHOWN)
+              and by_slider["thumb"] == start_s + 600
+              and not by_speed["live"] and by_speed["speed"] == "600×"
+              and not by_play["live"] and page.evaluate("eclipse.isPlaying()"),
+              "slider %s, speed %s %s, play %s"
+              % (by_slider["live"], by_speed["live"], by_speed["speed"], by_play["live"]))
+        check("18h. and nothing in it broke", not errors, "; ".join(errors[:3]))
+        browser.close()
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     extensions_map = dict(http.server.SimpleHTTPRequestHandler.extensions_map,
                           **{".webmanifest": "application/manifest+json",
@@ -1859,6 +1972,7 @@ def main():
 
     check_installable()
     check_locate()
+    check_live()
 
     bad = [r for r in results if not r[0]]
     print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")
