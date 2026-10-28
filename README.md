@@ -47,6 +47,23 @@ root** (not from `web/`, which cannot reach `../data/`):
 python3 -m http.server 8000    # -> http://localhost:8000/web/
 ```
 
+## On a phone
+
+The page is an installable web app: "Add to Home Screen" (Safari) or "Install
+app" (Chrome) opens it full screen without the browser's bars. The manifest is
+`web/manifest.webmanifest`, the icons are in `web/icons/`.
+
+`web/sw.js`, a service worker, keeps the app's shell on the device — the page,
+its scripts and styles, Leaflet, the catalogue and the eclipses near enough to
+plan a trip for — so the map opens on a weak connection or none; any other
+eclipse is kept once it has been opened. Map tiles still come from the network.
+A service worker only runs over HTTPS or from `localhost`, never from a
+`file://` URL, where the page works exactly as before without one.
+
+Its cache is named after `VERSION` in `sw.js`, which has to equal `VERSION` in
+`app.js` (`check.py` fails otherwise): bumping both is what makes a release
+reach phones that already have the old one.
+
 ## How it works
 
 A point on Earth is inside the umbra at time *t* when, as seen from that

@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Täydelliset auringonpimennykset 1986–2066</title>
+<!-- Installable: added to a phone's home screen it opens without the
+     browser's bars, and sw.js keeps the shell for a weak connection. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0c12">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Pimennykset">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -66,5 +75,16 @@
 <script src="eclipse-default.js"></script>
 <script src="tz.js"></script>
 <script src="app.js"></script>
+<script>
+  // Not from a file:// URL, where there is no worker to have; and a worker
+  // that will not register leaves the page exactly as it was.
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (err) {
+        console.warn('service worker:', err);
+      });
+    });
+  }
+</script>
 </body>
 </html>

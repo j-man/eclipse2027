@@ -7,12 +7,16 @@
 Needs playwright:  pip install playwright && playwright install chromium
 """
 
+import functools
+import http.server
 import json
 import math
 from datetime import datetime, timezone
 import re
 import os
+import struct
 import sys
+import threading
 
 from playwright.sync_api import sync_playwright
 
@@ -44,6 +48,8 @@ SHOTS = {
 }
 
 results = []
+
+WEB = os.path.join(HERE, "web")
 
 
 def check(name, ok, detail=""):
@@ -88,6 +94,199 @@ IN_POLY = """
   return c;
 }
 """
+
+
+def png_size(path):
+    """(width, height) from a PNG's header, or None if it is not a PNG."""
+    with open(path, "rb") as fh:
+        head = fh.read(24)
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return struct.unpack(">II", head[16:24])
+
+
+def js_version(text):
+    found = re.search(r"var VERSION\s*=\s*(\d+)", text)
+    return int(found.group(1)) if found else None
+
+
+def check_installable():
+    """16. The page can be installed on a phone, and its shell is cached.
+
+    The static half reads the files; the live half needs a real origin,
+    because a service worker never runs from a file:// URL."""
+    try:
+        manifest = json.load(open(os.path.join(WEB, "manifest.webmanifest"), encoding="utf-8"))
+        bad_json = ""
+    except (OSError, ValueError) as err:
+        manifest, bad_json = {}, str(err)
+    check("16a. manifest.webmanifest is valid JSON", not bad_json, bad_json)
+    needed = ("name", "short_name", "start_url", "scope", "display",
+              "background_color", "theme_color", "icons")
+    check("16b. the manifest names the app and opens standalone",
+          all(manifest.get(k) for k in needed) and manifest.get("display") == "standalone",
+          ", ".join(k for k in needed if not manifest.get(k)) or manifest.get("display", ""))
+    icons, wrong = manifest.get("icons") or [], []
+    for icon in icons:
+        path = os.path.join(WEB, icon.get("src", ""))
+        size = png_size(path) if os.path.isfile(path) else None
+        want = tuple(int(x) for x in icon.get("sizes", "0x0").split("x"))
+        if size != want:
+            wrong.append("%s: %s, not %s" % (icon.get("src"), size, want))
+    sizes = {(i.get("sizes"), i.get("purpose", "any")) for i in icons}
+    check("16c. every icon in the manifest exists at the size it claims",
+          icons and not wrong, "; ".join(wrong) or "%d icons" % len(icons))
+    check("16d. 192 and 512 px icons, and a maskable one",
+          ("192x192", "any") in sizes and ("512x512", "any") in sizes
+          and any(p == "maskable" for _, p in sizes), str(sorted(sizes)))
+
+    page = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
+    tags = ['<link rel="manifest" href="manifest.webmanifest">',
+            '<meta name="theme-color" content="%s">' % manifest.get("theme_color"),
+            '<link rel="apple-touch-icon" href="icons/icon-180.png">',
+            '<meta name="apple-mobile-web-app-capable" content="yes">',
+            '<meta name="apple-mobile-web-app-status-bar-style"',
+            '<meta name="apple-mobile-web-app-title"',
+            "navigator.serviceWorker.register('sw.js')"]
+    missing = [t for t in tags if t not in page]
+    touch = os.path.join(WEB, "icons", "icon-180.png")
+    check("16e. index.html links the manifest, the iOS tags and the worker",
+          not missing and os.path.isfile(touch) and png_size(touch) == (180, 180),
+          "; ".join(missing))
+
+    sw = open(os.path.join(WEB, "sw.js"), encoding="utf-8").read()
+    app_version = js_version(open(os.path.join(WEB, "app.js"), encoding="utf-8").read())
+    check("16f. the worker's cache is versioned with the page",
+          js_version(sw) is not None and js_version(sw) == app_version,
+          "sw.js %s, app.js %s" % (js_version(sw), app_version))
+    shell = re.search(r"var SHELL = \[(.*?)\];", sw, re.S)
+    shell = re.findall(r"'([^']+)'", shell.group(1)) if shell else []
+    absent = [f for f in shell if f != "./" and not os.path.isfile(os.path.join(WEB, f))]
+    check("16g. every file in the worker's shell exists",
+          shell and not absent, "; ".join(absent) or "%d files" % len(shell))
+    # and the shell is everything the page itself asks this site for
+    asked = {n for n in re.findall(r'(?:src|href)="([^"]+)"', page) if "://" not in n}
+    asked |= {i.get("src") for i in icons} | {"manifest.webmanifest", "index.html"}
+    uncovered = sorted(asked - set(shell))
+    check("16g2. the shell holds every local file the page and its manifest load",
+          not uncovered, "; ".join(uncovered) or "%d files" % len(asked))
+
+    # the live half: serve the repo root as the site does, so ../data/ is there
+    handler = functools.partial(QuietHandler, directory=HERE)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = "http://127.0.0.1:%d/web/" % httpd.server_address[1]
+    try:
+        live_checks(httpd, base, shell, app_version)
+    except Exception as err:          # a timeout is a failed check, not a crash
+        check("16. the live service worker checks ran to the end", False,
+              "%s: %s" % (type(err).__name__, str(err).splitlines()[0][:160]))
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def live_checks(httpd, base, shell, app_version):
+    """The half that needs a browser and a real origin (see check_installable)."""
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 390, "height": 844},
+                                  timezone_id="Europe/Helsinki")
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base)
+        page.wait_for_function("window.eclipse !== undefined", timeout=15000)
+        page.evaluate("navigator.serviceWorker.ready")
+        page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=15000)
+        cached = page.evaluate("""async () => {
+          const names = await caches.keys();
+          const out = {};
+          for (const n of names) {
+            const c = await caches.open(n);
+            out[n] = (await c.keys()).map(r => r.url);
+          }
+          return out;
+        }""")
+        name = "pimennykset-v%d" % app_version
+        urls = cached.get(name, [])
+        want = [base + f for f in shell if f != "./"] + [base]
+        today = page.evaluate("eclipse.today()")
+        opens_on = page.evaluate("eclipse.data.meta.date")
+        data_url = base.replace("/web/", "/data/eclipses/") + opens_on + ".js"
+        check("16h. the worker caches the shell under its versioned name",
+              list(cached) == [name] and all(u in urls for u in want),
+              "%s; missing %s" % (list(cached), [u for u in want if u not in urls][:3]))
+        check("16i. and the eclipse the page opens on, so it opens offline too",
+              data_url in urls, "%s on %s" % (opens_on, today))
+        leaflet = [u for u in urls if u.startswith("https://unpkg.com/leaflet@")]
+        check("16h2. Leaflet is cached too, the map needs it to draw at all",
+              len(leaflet) == 2, str(leaflet))
+        check("16j. map tiles are not cached",
+              not any("tile" in u for u in urls), "%d entries" % len(urls))
+
+        # a release: the same site with the next version of the worker
+        QuietHandler.sw_bump = 1
+        page.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update())")
+        newer = "pimennykset-v%d" % (app_version + 1)
+        for _ in range(60):                    # up to 15 s for it to install
+            keys = page.evaluate("caches.keys()")
+            if keys == [newer]:
+                break
+            page.wait_for_timeout(250)
+        check("16m. a new release replaces the cache rather than piling up beside it",
+              keys == [newer], str(keys))
+        # Only the worker may answer now. The server is gone, not merely
+        # "offline" (Chromium's offline mode does not cover a worker's own
+        # fetches), and the browser's HTTP cache is off, which would
+        # otherwise hold every file this server sent.
+        httpd.shutdown()
+        httpd.server_close()
+        cdp = ctx.new_cdp_session(page)
+        cdp.send("Network.enable")
+        cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        ctx.set_offline(True)
+        page.reload()
+        page.wait_for_function("window.eclipse !== undefined && eclipse.data", timeout=15000)
+        page.wait_for_timeout(1000)
+        title = (page.text_content("#card-title") or "").strip()
+        check("16k. with no network at all the page still opens on its eclipse",
+              page.evaluate("eclipse.data.meta.date") == opens_on and title
+              and page.evaluate("typeof L") == "object",
+              "%s, %r" % (page.evaluate("eclipse.data.meta.date"), title))
+        check("16l. and nothing in it broke, the catalogue included",
+              not errors and page.evaluate("!!window.ECLIPSE_INDEX"), "; ".join(errors[:3]))
+
+        browser.close()
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    extensions_map = dict(http.server.SimpleHTTPRequestHandler.extensions_map,
+                          **{".webmanifest": "application/manifest+json",
+                             ".js": "text/javascript"})
+    # 16m: serve sw.js as the next release would be, VERSION moved on by this
+    sw_bump = 0
+
+    def do_GET(self):
+        if self.sw_bump and self.path.split("?")[0].endswith("/web/sw.js"):
+            text = open(os.path.join(WEB, "sw.js"), encoding="utf-8").read()
+            text = re.sub(r"var VERSION = (\d+);",
+                          lambda m: "var VERSION = %d;" % (int(m.group(1)) + self.sw_bump), text)
+            body = text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def log_message(self, *args):
+        pass
 
 
 def main():
@@ -1505,6 +1704,8 @@ def main():
                 print("  shot  shots/%s.png" % name)
 
         browser.close()
+
+    check_installable()
 
     bad = [r for r in results if not r[0]]
     print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")
