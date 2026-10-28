@@ -13,7 +13,7 @@
 
 'use strict';
 
-var VERSION = 26;
+var VERSION = 27;
 var CACHE = 'pimennykset-v' + VERSION;
 
 // Relative to this file, which lives in web/ beside index.html.
@@ -26,6 +26,8 @@ var SHELL = [
   'eclipse-index.js',
   'eclipse-default.js',
   'manifest.webmanifest',
+  'icons/icon.svg',
+  'icons/favicon-32.png',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

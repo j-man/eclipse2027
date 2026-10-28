@@ -171,6 +171,17 @@ def check_installable():
     check("16g2. the shell holds every local file the page and its manifest load",
           not uncovered, "; ".join(uncovered) or "%d files" % len(asked))
 
+    svg = open(os.path.join(WEB, "icons", "icon.svg"), encoding="utf-8").read()
+    box = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+    favicons = ['<link rel="icon" href="icons/icon.svg" type="image/svg+xml">',
+                '<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">']
+    check("16n. the icon has its SVG source and a favicon in both forms",
+          box and box.group(1) == box.group(2) and '<g id="art">' in svg
+          and all(f in page for f in favicons)
+          and png_size(os.path.join(WEB, "icons", "favicon-32.png")) == (32, 32),
+          "; ".join(f for f in favicons if f not in page))
+    check_icon_safe_zone()
+
     # the live half: serve the repo root as the site does, so ../data/ is there
     handler = functools.partial(QuietHandler, directory=HERE)
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -184,6 +195,46 @@ def check_installable():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# How far from the centre an icon's bright pixels reach, as a share of its width.
+BRIGHT_EXTENT = """async (src) => {
+  const img = new Image();
+  img.src = src;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  const mid = c.width / 2;
+  let far = 0;
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+    const i = (y * c.width + x) * 4;
+    if (Math.max(d[i], d[i + 1], d[i + 2]) >= 200)
+      far = Math.max(far, Math.hypot(x + 0.5 - mid, y + 0.5 - mid));
+  }
+  return far / c.width;
+}"""
+
+
+def check_icon_safe_zone():
+    """16o. Android crops a maskable icon to the middle 80 % circle: everything
+    bright in it has to be inside, and it has to be the shrunk copy."""
+    import base64
+    def data_url(name):
+        raw = open(os.path.join(WEB, "icons", name), "rb").read()
+        return "data:image/png;base64," + base64.b64encode(raw).decode()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        masked = page.evaluate(BRIGHT_EXTENT, data_url("icon-maskable-512.png"))
+        plain = page.evaluate(BRIGHT_EXTENT, data_url("icon-512.png"))
+        browser.close()
+    check("16o. the maskable icon keeps its bright parts inside the safe circle",
+          0 < masked <= 0.4 and masked < plain,
+          "maskable reaches %.0f %%, plain %.0f %% of the width (safe: 40 %%)"
+          % (masked * 100, plain * 100))
 
 
 def live_checks(httpd, base, shell, app_version):

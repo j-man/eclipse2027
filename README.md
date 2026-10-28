@@ -51,7 +51,10 @@ python3 -m http.server 8000    # -> http://localhost:8000/web/
 
 The page is an installable web app: "Add to Home Screen" (Safari) or "Install
 app" (Chrome) opens it full screen without the browser's bars. The manifest is
-`web/manifest.webmanifest`, the icons are in `web/icons/`.
+`web/manifest.webmanifest`. The icon — a total eclipse with its diamond ring —
+is drawn once as `web/icons/icon.svg`; `.venv/bin/python make_icons.py` renders
+the PNGs from it (180 px for iOS, 192 and 512 px, a maskable 512 px for Android
+and a 32 px favicon) with the same Chromium `check.py` uses.
 
 `web/sw.js`, a service worker, keeps the app's shell on the device — the page,
 its scripts and styles, Leaflet, the catalogue and the eclipses near enough to

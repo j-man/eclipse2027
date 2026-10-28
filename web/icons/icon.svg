@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- The app icon: a total solar eclipse. A black Moon, the corona around it,
+       and the diamond ring where the last of the Sun breaks through.
+       Source for every PNG in this folder: make_icons.py renders it.
+       Everything inside #art stays within 205 px of the centre: the safe
+       circle a maskable icon is cropped to, and make_icons.py shrinks the
+       maskable copy a little further still. -->
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="50%" r="72%">
+      <stop offset="0%" stop-color="#1c2442"/>
+      <stop offset="55%" stop-color="#0d1124"/>
+      <stop offset="100%" stop-color="#05060c"/>
+    </radialGradient>
+    <radialGradient id="corona" cx="256" cy="256" r="205" gradientUnits="userSpaceOnUse">
+      <stop offset="0.50" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="0.56" stop-color="#fff4d6" stop-opacity="0.95"/>
+      <stop offset="0.66" stop-color="#ffd27a" stop-opacity="0.55"/>
+      <stop offset="0.82" stop-color="#ff9f3a" stop-opacity="0.18"/>
+      <stop offset="1.00" stop-color="#ff9f3a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="streamer" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff1c8" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#fff1c8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="diamond" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="35%" stop-color="#fffbe8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ffe9a8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#sky)"/>
+
+  <g id="art">
+    <!-- long faint streamers, as the corona looks near solar minimum -->
+    <g fill="url(#streamer)">
+      <ellipse cx="256" cy="256" rx="200" ry="34" transform="rotate(-18 256 256)"/>
+      <ellipse cx="256" cy="256" rx="186" ry="26" transform="rotate(24 256 256)"/>
+      <ellipse cx="256" cy="256" rx="150" ry="20" transform="rotate(78 256 256)"/>
+    </g>
+    <circle cx="256" cy="256" r="205" fill="url(#corona)"/>
+    <!-- the Moon, a touch smaller than the bright inner corona -->
+    <circle cx="256" cy="256" r="104" fill="#000000"/>
+    <circle cx="256" cy="256" r="104" fill="none" stroke="#fff6dc" stroke-width="5"/>
+    <!-- the diamond: one bead of sunlight on the rim, upper right -->
+    <circle cx="331" cy="184" r="58" fill="url(#diamond)"/>
+    <path d="M331 136 L337 178 L379 184 L337 190 L331 232 L325 190 L283 184 L325 178 Z"
+          fill="#ffffff" opacity="0.95"/>
+    <circle cx="331" cy="184" r="11" fill="#ffffff"/>
+  </g>
+</svg>
