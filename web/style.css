@@ -717,3 +717,55 @@ body.playing #play .ico-pause { display: block; }
 }
 .search-from a { color: var(--ink-dim); }
 .search-from a:hover { color: var(--ink); }
+
+/* --- own location ------------------------------------------------------------ */
+
+/* Bottom right, above the attribution; on a phone, above the time bar too. */
+.leaflet-bottom .leaflet-control.locate {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  margin-right: 12px;
+}
+
+.locate-btn {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 50%;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  height: 46px;
+  justify-content: center;
+  padding: 0;
+  width: 46px;
+}
+.locate-btn svg { height: 24px; width: 24px; }
+.locate-btn:hover, .locate-btn:focus-visible { background: #262a36; color: #fff; outline: none; }
+.locate-btn.located { color: #5fb0ff; }
+.locate-btn.locating svg { animation: locate-pulse 1s ease-in-out infinite; }
+@keyframes locate-pulse { 50% { opacity: 0.3; } }
+
+.locate-note {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  margin: 0;
+  max-width: min(16rem, calc(100vw - 90px));
+  padding: 6px 9px;
+}
+.locate-note[hidden] { display: none; }
+
+/* the dot and its accuracy circle, in a blue nothing else on the map uses */
+.me-dot { fill: #3d8bff; stroke: #ffffff; }
+.me-accuracy { fill: #3d8bff; fill-opacity: 0.15; stroke: #3d8bff; stroke-opacity: 0.6; }
+
+@media (max-width: 720px) {
+  /* clear of the time bar, which spans the bottom of a phone */
+  .leaflet-bottom .leaflet-control.locate { margin-bottom: 96px; }
+}

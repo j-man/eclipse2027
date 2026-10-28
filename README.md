@@ -63,6 +63,16 @@ eclipse is kept once it has been opened. Map tiles still come from the network.
 A service worker only runs over HTTPS or from `localhost`, never from a
 `file://` URL, where the page works exactly as before without one.
 
+The round button in the bottom right is **your own location**: one press asks
+the device where it is (high accuracy, giving up after 15 s), marks it with a
+blue dot and a circle as wide as the reported accuracy, and then does exactly
+what a click on that spot does — the popup with the local circumstances, and
+the clock jumping to the shadow's nearest moment there. A refused permission,
+no position and a timeout each say so beside the button. Browsers hand out a
+location only to a page served over HTTPS or from `localhost` (a local
+`file://` page also works in Chrome); over plain HTTP from another machine
+the button can only explain that.
+
 Its cache is named after `VERSION` in `sw.js`, which has to equal `VERSION` in
 `app.js` (`check.py` fails otherwise): bumping both is what makes a release
 reach phones that already have the old one.

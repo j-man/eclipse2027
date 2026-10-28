@@ -311,6 +311,107 @@ def live_checks(httpd, base, shell, app_version):
         browser.close()
 
 
+HERE_I_AM = {"latitude": 36.72, "longitude": -4.42, "accuracy": 35}   # Málaga
+
+
+def check_locate():
+    """17. The own-location button: one press, and the map goes where you are.
+
+    The position is the browser context's own geolocation, set here, so the
+    real navigator.geolocation code path runs; the failures are made by
+    replacing getCurrentPosition, since a real timeout cannot be ordered."""
+    lat, lon, acc = HERE_I_AM["latitude"], HERE_I_AM["longitude"], HERE_I_AM["accuracy"]
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 390, "height": 844},
+                                  timezone_id="Europe/Helsinki",
+                                  geolocation=HERE_I_AM, permissions=["geolocation"])
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(URL)
+        page.wait_for_function("window.eclipse !== undefined && eclipse.data", timeout=15000)
+        page.wait_for_timeout(1500)
+        page.evaluate("eclipse.setPlaying(false)")
+
+        button = page.query_selector("#locate")
+        box = button.bounding_box() if button else None
+        def overlaps(a, b):
+            return not (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"] or
+                        a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+        others = {sel: page.query_selector(sel).bounding_box() for sel in ("#controls", "#clock")}
+        hit = [sel for sel, other in others.items() if box and overlaps(box, other)]
+        check("17a. a round location button a thumb can hit, clear of the time bar and clock",
+              box is not None and box["width"] >= 40 and box["height"] >= 40
+              and button.is_visible() and button.get_attribute("aria-label")
+              and not hit and box["x"] + box["width"] <= 390,
+              "%s; overlaps %s" % (box, hit))
+
+        page.evaluate("""() => { window.__clicks = [];
+          eclipse.map.on('click', e => __clicks.push([e.latlng.lat, e.latlng.lng])); }""")
+        button.click()
+        page.wait_for_function("eclipse.located() !== null", timeout=10000)
+        page.wait_for_timeout(800)
+        got = page.evaluate("""() => {
+          let popup = null, circle = null, dot = null;
+          eclipse.map.eachLayer(l => {
+            if (l instanceof L.Popup) popup = l;
+            else if (l instanceof L.Circle && l.options.pane === 'me') circle = l;
+            else if (l instanceof L.CircleMarker && l.options.pane === 'me') dot = l;
+          });
+          const c = eclipse.map.getCenter();
+          return {located: eclipse.located(), centre: [c.lat, c.lng], clicks: __clicks,
+                  popup: popup && [popup.getLatLng().lat, popup.getLatLng().lng],
+                  text: popup ? popup.getElement().innerText : '',
+                  radius: circle && circle.getRadius(),
+                  dot: dot && [dot.getLatLng().lat, dot.getLatLng().lng],
+                  time: eclipse.time()};
+        }""")
+        near = lambda a, b: a is not None and abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
+        here = got["located"] or {}
+        check("17b. the device's position is marked: a dot and a circle as wide as its accuracy",
+              near((here.get("lat"), here.get("lon")), (lat, lon)) and here.get("accuracy") == acc
+              and near(got["dot"], (lat, lon)) and got["radius"] == acc,
+              "%s, radius %s" % (got["located"], got["radius"]))
+        check("17c. the map centres on it and opens the popup there, as a click would",
+              near(got["centre"], (lat, lon)) and near(got["popup"], (lat, lon))
+              and "36.720" in got["text"] and "4.420" in got["text"],
+              "centre %s, popup %s" % (got["centre"], got["popup"]))
+        want_t = page.evaluate("eclipse.closestApproach(%r, %r)" % (lat, lon))
+        check("17d. the clock jumps to the shadow's nearest moment there",
+              got["time"] == want_t, "%s vs %s" % (got["time"], want_t))
+        check("17e. through the click handler exactly once: the press is not a map click",
+              len(got["clicks"]) == 1 and near(got["clicks"][0], (lat, lon)), str(got["clicks"]))
+
+        asked = page.evaluate("""() => new Promise(done => {
+          navigator.geolocation.getCurrentPosition = (ok, fail, opts) => done(opts);
+          document.getElementById('locate').click(); })""")
+        check("17f. it asks for high accuracy and gives up within a sensible time",
+              asked.get("enableHighAccuracy") is True and 5000 <= asked.get("timeout", 0) <= 30000,
+              str(asked))
+
+        said = {}
+        for code, word in ((1, "evätty"), (2, "ei ole saatavilla"), (3, "sekunnissa")):
+            page.evaluate("""code => {
+              navigator.geolocation.getCurrentPosition = (ok, fail) =>
+                setTimeout(() => fail({code: code, message: 'x'}), 10); }""", code)
+            page.click("#locate")
+            page.wait_for_timeout(200)
+            note = page.query_selector("#locate-note")
+            said[code] = (note.is_visible() and word in (note.text_content() or "")
+                          and "locating" not in (page.get_attribute("#locate", "class") or ""),
+                          note.text_content())
+        check("17g. a refusal, no position and a timeout each say so, and the button recovers",
+              all(ok for ok, _ in said.values()), " / ".join(t for _, t in said.values()))
+        check("17h. and nothing in it broke", not errors, "; ".join(errors[:3]))
+        browser.close()
+
+    readme = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
+    check("17i. the README says location needs HTTPS or localhost",
+          re.search(r"(?is)sijainti|location", readme) and "HTTPS" in readme
+          and "localhost" in readme)
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     extensions_map = dict(http.server.SimpleHTTPRequestHandler.extensions_map,
                           **{".webmanifest": "application/manifest+json",
@@ -1757,6 +1858,7 @@ def main():
         browser.close()
 
     check_installable()
+    check_locate()
 
     bad = [r for r in results if not r[0]]
     print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")

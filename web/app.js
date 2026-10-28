@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 27;
+  var VERSION = 28;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -473,6 +473,120 @@
     map.setView(at, placeZoom(result));
     map.fire('click', { latlng: L.latLng(at[0], at[1]) });
     return at;
+  }
+
+  // -- own location ----------------------------------------------------------
+  //
+  // One press asks the device where it is, once. What comes back is treated
+  // exactly as a found place is (showPlace): the map moves there and the
+  // click handler fires at that point, so the popup, the clock jumping to the
+  // shadow's nearest moment and the countdown all come from the one code path
+  // a click uses. A dot and a circle as wide as the reported accuracy mark it.
+  // The browser hands a position out only over HTTPS or on localhost.
+
+  var LOCATE_TIMEOUT_MS = 15000;
+  var LOCATE_MAX_AGE_MS = 30000;   // a fix from half a minute ago will do
+  var LOCATE_NOTE_MS = 8000;
+  var located = null, locateLayer = null, locateNoteTimer = null;
+
+  function locateMessage(err) {
+    var code = err && err.code;
+    if (code === 1) return 'sijaintilupa evätty: salli sijainti selaimen asetuksista';
+    if (code === 2) return 'sijainti ei ole saatavilla';
+    if (code === 3) return 'sijaintia ei saatu ' + Math.round(LOCATE_TIMEOUT_MS / 1000) +
+                           ' sekunnissa';
+    return 'sijaintia ei saatu' + (err && err.message ? ': ' + err.message : '');
+  }
+
+  function locateNote(text) {
+    if (locateNoteTimer) { clearTimeout(locateNoteTimer); locateNoteTimer = null; }
+    el.locateNote.textContent = text || '';
+    el.locateNote.hidden = !text;
+    if (text) {
+      locateNoteTimer = setTimeout(function () { el.locateNote.hidden = true; },
+                                   LOCATE_NOTE_MS);
+    }
+  }
+
+  function locateState(state) {
+    el.locate.classList.toggle('locating', state === 'locating');
+    el.locate.classList.toggle('located', state === 'located');
+    el.locate.setAttribute('aria-busy', state === 'locating' ? 'true' : 'false');
+  }
+
+  // The mark and the move, given a position: also what a scripted check calls.
+  function showLocation(lat, lon, accuracy) {
+    lat = +lat; lon = +lon;
+    if (!isFinite(lat) || !isFinite(lon)) return null;
+    accuracy = isFinite(+accuracy) && +accuracy > 0 ? +accuracy : 0;
+    if (locateLayer) map.removeLayer(locateLayer);
+    var at = [lat, wrapLon(lon)];
+    locateLayer = L.layerGroup([
+      L.circle(at, { radius: accuracy, pane: 'me', interactive: false,
+                     className: 'me-accuracy', weight: 1 }),
+      L.circleMarker(at, { radius: 7, pane: 'me', interactive: false,
+                           className: 'me-dot', weight: 2.5, fillOpacity: 1 })
+    ]).addTo(map);
+    located = { lat: at[0], lon: at[1], accuracy: accuracy };
+    locateState('located');
+    return showPlace({ lat: lat, lon: lon });
+  }
+
+  function locate() {
+    var geo = window.navigator && window.navigator.geolocation;
+    if (!geo) {
+      locateNote('selain ei osaa kertoa sijaintia');
+      return Promise.resolve(null);
+    }
+    if (window.isSecureContext === false) {
+      locateNote('sijainti toimii vain https-osoitteesta');
+      return Promise.resolve(null);
+    }
+    locateNote('');
+    locateState('locating');
+    return new Promise(function (resolve) {
+      geo.getCurrentPosition(function (pos) {
+        var c = pos.coords;
+        resolve(showLocation(c.latitude, c.longitude, c.accuracy));
+      }, function (err) {
+        locateState(located ? 'located' : '');
+        locateNote(locateMessage(err));
+        resolve(null);
+      }, { enableHighAccuracy: true, timeout: LOCATE_TIMEOUT_MS,
+           maximumAge: LOCATE_MAX_AGE_MS });
+    });
+  }
+
+  // A round button in the bottom right, where a thumb reaches it on a phone.
+  function addLocateControl() {
+    var Locate = L.Control.extend({
+      onAdd: function () {
+        var box = L.DomUtil.create('div', 'locate');
+        var note = L.DomUtil.create('p', 'locate-note', box);
+        note.id = 'locate-note';
+        note.hidden = true;
+        note.setAttribute('role', 'status');
+        var button = L.DomUtil.create('button', 'locate-btn', box);
+        button.id = 'locate';
+        button.type = 'button';
+        button.title = 'Oma sijainti';
+        button.setAttribute('aria-label', 'Oma sijainti');
+        button.innerHTML =
+          '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="6.2" fill="none" stroke="currentColor" stroke-width="2"/>' +
+          '<circle cx="12" cy="12" r="2.6" fill="currentColor"/>' +
+          '<path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4" stroke="currentColor"' +
+          ' stroke-width="2" stroke-linecap="round"/></svg>';
+        // The press must not also land on the map as a click there.
+        L.DomEvent.disableClickPropagation(box);
+        L.DomEvent.on(box, 'click mousedown dblclick touchstart', L.DomEvent.stopPropagation);
+        L.DomEvent.on(button, 'click', function () { locate(); });
+        el.locate = button;
+        el.locateNote = note;
+        return box;
+      },
+    });
+    new Locate({ position: 'bottomright' }).addTo(map);
   }
 
   function searchNow(query) {
@@ -1244,6 +1358,7 @@
     });
     L.control.zoom({ position: 'topright' }).addTo(map);
     addSearchControl();
+    addLocateControl();
 
     L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -1263,6 +1378,10 @@
 
     map.createPane('umbra');
     map.getPane('umbra').style.zIndex = 450;
+    // The own-location dot: over the shading and the site markers, under popups.
+    map.createPane('me');
+    map.getPane('me').style.zIndex = 650;
+    map.getPane('me').style.pointerEvents = 'none';
 
     clickPopup = L.popup({ maxWidth: popupMax(), className: 'click-popup',
                            autoPan: false });
@@ -1465,7 +1584,14 @@
       placeName: placeName,
       placeZoom: placeZoom,
       showPlace: showPlace,
-      searchPause: function () { return SEARCH_PAUSE_MS; }
+      searchPause: function () { return SEARCH_PAUSE_MS; },
+      // Own location, for scripted checks: the press, the mark-and-move it ends
+      // in, what each failure says, and where the dot is.
+      locate: locate,
+      showLocation: showLocation,
+      locateMessage: locateMessage,
+      located: function () { return located; },
+      locateTimeout: function () { return LOCATE_TIMEOUT_MS; }
     };
 
     maybePulse();
