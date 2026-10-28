@@ -63,6 +63,12 @@ eclipse is kept once it has been opened. Map tiles still come from the network.
 A service worker only runs over HTTPS or from `localhost`, never from a
 `file://` URL, where the page works exactly as before without one.
 
+On a narrow screen the place search folds into a magnifier that opens the
+field when tapped, and steps aside while a popup is open, as the title card
+does: a popup can open anywhere on a phone, and nothing may sit on it. A popup
+that would run off a side of the screen slides back onto it, its tip staying
+on the point that was tapped. Wider screens are unchanged.
+
 The round button in the bottom right is **your own location**: one press asks
 the device where it is (high accuracy, giving up after 15 s), marks it with a
 blue dot and a circle as wide as the reported accuracy, and then does exactly

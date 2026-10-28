@@ -613,6 +613,25 @@ body.live .live-dot { background: #ff4b4b; opacity: 1; animation: live-breathe 1
   }
   body.menu-open .search { display: none; }
 
+  /* Folded, the search is a round magnifier; open, the magnifier sits in
+     front of the field and closes it again. And while a popup is up the
+     search stands aside altogether, as the card does: a popup can open
+     anywhere on a screen this narrow, and nothing may sit on it. */
+  .search .search-toggle { display: grid; }
+  .leaflet-top .leaflet-control.search:not(.open) {
+    width: auto;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .search:not(.open) > :not(.search-toggle) { display: none !important; }
+  .search.open { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .search.open .search-toggle { width: 30px; height: 30px; }
+  .search.open .search-field { flex: 1; width: auto; min-width: 0; }
+  .search.open .search-hits, .search.open .search-note, .search.open .search-from {
+    flex-basis: 100%;
+  }
+  body.popup-open .search { display: none; }
+
   /* A popup answers what the user just tapped, and on a phone it opens under
      the card — it cannot be raised over it, because Leaflet draws popups
      inside the map pane and that pane's own stacking context caps them, and it
@@ -692,6 +711,22 @@ body.live .live-dot { background: #ff4b4b; opacity: 1; animation: live-breathe 1
   padding: 6px;
   width: min(15rem, calc(100vw - 90px));
 }
+
+/* The phone's magnifier; a wider screen never shows it (see the phone rules). */
+.search-toggle {
+  display: none;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.search-toggle svg { width: 21px; height: 21px; }
+.search-toggle:hover, .search-toggle:focus-visible { color: #fff0bd; outline: none; }
 
 .search-field {
   background: rgba(10, 12, 18, 0.6);

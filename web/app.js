@@ -8,7 +8,7 @@
   // From here on the version tracks the task number. It had drifted by two:
   // TASK 5 was a validation-only change that never touched the page, and the
   // first working map was v1 before the numbered tasks began.
-  var VERSION = 29;
+  var VERSION = 30;
 
   // Eclipses close enough to plan a trip for: still to come, and within this
   // calendar year plus two. Today that is exactly 2026-2028; deriving it from
@@ -619,6 +619,18 @@
       onAdd: function () {
         var box = L.DomUtil.create('div', 'search');
         box.id = 'search';
+        // On a phone the search is this magnifier until it is wanted: the open
+        // box is wider than half the screen and would sit on whatever popup
+        // the map opens. On a wider screen the stylesheet never shows it.
+        var toggle = L.DomUtil.create('button', 'search-toggle', box);
+        toggle.id = 'search-toggle';
+        toggle.type = 'button';
+        toggle.setAttribute('aria-label', 'Etsi paikka');
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML =
+          '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.3"' +
+          ' fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M15.3 15.3 20.5 20.5"' +
+          ' stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
         var field = L.DomUtil.create('input', 'search-field', box);
         field.id = 'search-field';
         field.type = 'text';
@@ -654,6 +666,7 @@
                       L.DomEvent.stopPropagation);
 
         el.search = box;
+        el.searchToggle = toggle;
         el.searchField = field;
         el.searchHits = list;
         el.searchNote = note;
@@ -705,8 +718,19 @@
     });
   }
 
+  // Opens or folds the search back into its magnifier. Only a phone's
+  // stylesheet tells the two apart; elsewhere the box is always open.
+  function openSearch(on) {
+    el.search.classList.toggle('open', !!on);
+    el.searchToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) el.searchField.focus();
+  }
+
   function wireSearch() {
     var field = el.searchField;
+    el.searchToggle.addEventListener('click', function () {
+      openSearch(!el.search.classList.contains('open'));
+    });
     field.addEventListener('input', function () {
       if (searchTimer) clearTimeout(searchTimer);
       var query = field.value;
@@ -720,6 +744,8 @@
       } else if (e.key === 'Escape') {
         field.value = '';
         sayNothing('');
+        openSearch(false);
+        field.blur();
       }
     });
   }
@@ -1305,6 +1331,26 @@
     return Math.max(230, Math.min(430, window.innerWidth - 46));
   }
 
+  // A popup nearly as wide as a phone, hanging from the point that was tapped,
+  // runs off one side of the screen unless the tap was dead centre — and the
+  // map must not move under a tap. So on a phone the box slides sideways to
+  // stay on the screen, while its tip stays on the point. Wider screens keep
+  // the popup exactly where Leaflet puts it.
+  var POPUP_EDGE = 8;
+  var NARROW = '(max-width: 720px)';
+
+  function keepPopupOnScreen() {
+    var wrap = document.querySelector('.leaflet-popup .leaflet-popup-content-wrapper');
+    if (!wrap) return;
+    wrap.style.transform = '';
+    if (!(window.matchMedia && window.matchMedia(NARROW).matches)) return;
+    var r = wrap.getBoundingClientRect(), w = window.innerWidth, dx = 0;
+    if (r.width + 2 * POPUP_EDGE >= w) dx = (w - r.width) / 2 - r.left;
+    else if (r.left < POPUP_EDGE) dx = POPUP_EDGE - r.left;
+    else if (r.right > w - POPUP_EDGE) dx = w - POPUP_EDGE - r.right;
+    if (Math.abs(dx) >= 0.5) wrap.style.transform = 'translateX(' + Math.round(dx) + 'px)';
+  }
+
   // -- the countdown ---------------------------------------------------------
   //
   // Standing at the site, the question stops being "when" and becomes "how
@@ -1465,7 +1511,12 @@
     // popup-open rules in the stylesheet.
     map.on('popupopen', function () {
       document.body.classList.add('popup-open');
+      // a popup is what the user asked for: the search folds away for it
+      openSearch(false);
+      keepPopupOnScreen();
     });
+    map.on('move zoomend', keepPopupOnScreen);
+    window.addEventListener('resize', keepPopupOnScreen);
     map.on('popupclose', function () {
       document.body.classList.remove('popup-open');
       stopEta();

@@ -525,6 +525,133 @@ def check_live():
         browser.close()
 
 
+RECT = """sel => {
+  const e = document.querySelector(sel);
+  if (!e) return null;
+  const r = e.getBoundingClientRect();
+  const shown = r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+  return shown ? {x: r.left, y: r.top, width: r.width, height: r.height} : null;
+}"""
+
+
+def rects_meet(a, b):
+    return bool(a and b) and not (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
+                                  or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+
+
+def check_narrow_search():
+    """19. On a phone the search and a popup never sit on each other, and the
+    popup stays on the screen; on a desktop nothing about the search changed."""
+    try:
+        narrow_search_checks()
+    except Exception as err:          # a control that never appears times out
+        check("19. the narrow-screen search checks ran to the end", False,
+              "%s: %s" % (type(err).__name__, str(err).splitlines()[0][:160]))
+
+
+def narrow_search_checks():
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        errors = []
+
+        def open_page(w, h):
+            ctx = browser.new_context(viewport={"width": w, "height": h},
+                                      timezone_id="Europe/Helsinki")
+            page = ctx.new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(URL)
+            page.wait_for_function("window.eclipse !== undefined && eclipse.data", timeout=15000)
+            page.wait_for_timeout(1500)
+            page.evaluate("eclipse.setPlaying(false); eclipse.map.setView([36.6, -4.6], 7)")
+            page.wait_for_timeout(500)
+            return page
+
+        page = open_page(390, 844)
+        toggle = page.evaluate(RECT, "#search-toggle")
+        folded = page.evaluate(RECT, "#search-field") is None
+        page.click("#search-toggle")
+        opened = page.evaluate("""() => ({field: !!document.getElementById('search-field').offsetWidth,
+          focused: document.activeElement && document.activeElement.id,
+          expanded: document.getElementById('search-toggle').getAttribute('aria-expanded')})""")
+        page.keyboard.press("Escape")
+        refolded = page.evaluate(RECT, "#search-field") is None
+        check("19a. on a phone the search is a magnifier that opens the field and folds again",
+              toggle and toggle["width"] >= 40 and folded and opened["field"]
+              and opened["focused"] == "search-field" and opened["expanded"] == "true" and refolded,
+              "%s, opened %s" % (toggle, opened))
+
+        # taps all over the screen, with the search left open each time
+        clashes, offscreen, back = [], [], []
+        for x, y in ((80, 330), (300, 330), (195, 470), (330, 600), (60, 700), (350, 200)):
+            page.evaluate("eclipse.map.closePopup()")
+            page.click("#search-toggle")
+            page.evaluate("([x, y]) => eclipse.map.fire('click', "
+                          "{latlng: eclipse.map.containerPointToLatLng([x, y])})", [x, y])
+            page.wait_for_timeout(300)
+            pop = page.evaluate(RECT, ".leaflet-popup-content-wrapper")
+            for sel in ("#search", "#search-toggle", "#search-field"):
+                if rects_meet(page.evaluate(RECT, sel), pop):
+                    clashes.append((x, y, sel))
+            if not pop or pop["x"] < 0 or pop["x"] + pop["width"] > 390:
+                offscreen.append((x, y, pop and round(pop["x"]), pop and round(pop["x"] + pop["width"])))
+            page.evaluate("eclipse.map.closePopup()")
+            page.wait_for_timeout(100)
+            if page.evaluate(RECT, "#search-toggle") is None:
+                back.append((x, y))
+        check("19b. wherever the popup opens, the search is never on it",
+              not clashes, str(clashes[:3]))
+        check("19c. and the popup stays on the screen, its tip on the point",
+              not offscreen, str(offscreen[:3]))
+        check("19d. closing the popup brings the magnifier back", not back, str(back))
+
+        page.evaluate("eclipse.map.fire('click', {latlng: L.latLng(36.72, -4.42)})")
+        page.wait_for_timeout(300)
+        zoom = page.evaluate("""() => {
+          const a = document.querySelector('.leaflet-control-zoom-in');
+          const r = a.getBoundingClientRect();
+          return a.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+        }""")
+        before = page.evaluate("eclipse.map.getZoom()")
+        if zoom:
+            page.click(".leaflet-control-zoom-in")
+            page.wait_for_timeout(400)
+        check("19e. the zoom buttons still work with a popup up",
+              zoom and page.evaluate("eclipse.map.getZoom()") == before + 1,
+              "reachable %s, zoom %s -> %s" % (zoom, before, page.evaluate("eclipse.map.getZoom()")))
+        page.context.close()
+
+        page = open_page(360, 740)
+        page.evaluate("eclipse.map.fire('click', {latlng: L.latLng(36.72, -4.42)})")
+        page.wait_for_timeout(400)
+        fit = page.evaluate("""() => {
+          const w = document.querySelector('.leaflet-popup-content-wrapper').getBoundingClientRect();
+          const c = document.querySelector('.leaflet-popup-content');
+          const t = c.querySelector('table');
+          return {left: w.left, right: w.right, content: [c.scrollWidth, c.clientWidth],
+                  table: t ? [t.scrollWidth, t.clientWidth] : null,
+                  rows: t ? t.querySelectorAll('tr').length : 0};
+        }""")
+        check("19f. at 360 px the whole popup, table and all, is on the screen",
+              fit["left"] >= 0 and fit["right"] <= 360 and fit["content"][0] <= fit["content"][1]
+              and fit["table"] and fit["table"][0] <= fit["table"][1] and fit["rows"] >= 6,
+              str(fit))
+        page.context.close()
+
+        page = open_page(1280, 800)
+        desk = {sel: page.evaluate(RECT, sel) for sel in ("#search", "#search-field", "#search-toggle")}
+        page.evaluate("eclipse.map.fire('click', {latlng: L.latLng(36.72, -4.42)})")
+        page.wait_for_timeout(400)
+        still = page.evaluate(RECT, "#search-field")
+        moved = page.evaluate("document.querySelector('.leaflet-popup-content-wrapper').style.transform")
+        check("19g. on a desktop the search is open as before, popup or not",
+              desk["#search-field"] and desk["#search-toggle"] is None
+              and desk["#search"]["width"] >= 200 and still and not moved,
+              "%s, with popup %s, popup moved %r" % (desk["#search"], bool(still), moved))
+        page.context.close()
+        check("19h. and nothing in it broke", not errors, "; ".join(errors[:3]))
+        browser.close()
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     extensions_map = dict(http.server.SimpleHTTPRequestHandler.extensions_map,
                           **{".webmanifest": "application/manifest+json",
@@ -1973,6 +2100,7 @@ def main():
     check_installable()
     check_locate()
     check_live()
+    check_narrow_search()
 
     bad = [r for r in results if not r[0]]
     print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")
